@@ -14,7 +14,7 @@ import { setContext } from '../context';
 import { executeCommand, registerCommand } from '../system/command';
 import { debug, log, logName } from '../system/decorators/log';
 import { serialize } from '../system/decorators/serialize';
-import type { TrackedUsageFeatures } from '../usageTracker';
+import type { TrackedUsageFeatures } from '../telemetry/usageTracker';
 import type { IpcMessage, IpcMessageParams, IpcNotificationType, WebviewFocusChangedParams } from './protocol';
 import { ExecuteCommandType, onIpc, WebviewFocusChangedCommandType, WebviewReadyCommandType } from './protocol';
 
@@ -31,7 +31,7 @@ function nextIpcId() {
 	return `host:${ipcSequence}`;
 }
 
-export type WebviewIds = 'graph' | 'settings' | 'timeline' | 'welcome';
+export type WebviewIds = 'graph' | 'settings' | 'timeline' | 'welcome' | 'focus';
 
 @logName<WebviewBase<any>>((c, name) => `${name}(${c.id})`)
 export abstract class WebviewBase<State> implements Disposable {

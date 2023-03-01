@@ -5,8 +5,8 @@ import { isWeb } from '@env/platform';
 import { Api } from './api/api';
 import type { CreatePullRequestActionContext, GitLensApi, OpenPullRequestActionContext } from './api/gitlens';
 import type { CreatePullRequestOnRemoteCommandArgs, OpenPullRequestOnRemoteCommandArgs } from './commands';
-import { configuration, Configuration, fromOutputLevel, OutputLevel } from './configuration';
-import { Commands, ContextKeys, CoreCommands, LogLevel } from './constants';
+import { fromOutputLevel, OutputLevel } from './config';
+import { Commands, ContextKeys, CoreCommands } from './constants';
 import { Container } from './container';
 import { setContext } from './context';
 import { isGitUri } from './git/gitUri';
@@ -14,7 +14,6 @@ import { getBranchNameWithoutRemote, isBranch } from './git/models/branch';
 import { isCommit } from './git/models/commit';
 import { isRepository } from './git/models/repository';
 import { isTag } from './git/models/tag';
-import { Logger } from './logger';
 import {
 	showDebugLoggingWarningMessage,
 	showInsidersErrorMessage,
@@ -24,8 +23,11 @@ import {
 import { registerPartnerActionRunners } from './partners';
 import { Storage, SyncedStorageKeys } from './storage';
 import { executeCommand, executeCoreCommand, registerCommands } from './system/command';
+import { configuration, Configuration } from './system/configuration';
 import { setDefaultDateLocales } from './system/date';
 import { once } from './system/event';
+import { Logger } from './system/logger';
+import { LogLevel } from './system/logger.constants';
 import { flatten } from './system/object';
 import { Stopwatch } from './system/stopwatch';
 import { compare, fromString, satisfies } from './system/version';
@@ -56,7 +58,7 @@ export async function activate(context: ExtensionContext): Promise<GitLensApi | 
 				return undefined;
 			},
 		},
-		fromOutputLevel(configuration.get('outputLevel')),
+		fromOutputLevel(outputLevel),
 		context.extensionMode === ExtensionMode.Development,
 	);
 
@@ -108,12 +110,6 @@ export async function activate(context: ExtensionContext): Promise<GitLensApi | 
 
 	if (!workspace.isTrusted) {
 		void setContext(ContextKeys.Untrusted, true);
-		context.subscriptions.push(
-			workspace.onDidGrantWorkspaceTrust(() => {
-				void setContext(ContextKeys.Untrusted, undefined);
-				container.telemetry.setGlobalAttribute('workspace.isTrusted', workspace.isTrusted);
-			}),
-		);
 	}
 
 	setKeysForSync(context);
@@ -160,6 +156,15 @@ export async function activate(context: ExtensionContext): Promise<GitLensApi | 
 		context.subscriptions.push(...registerCommands(container));
 		registerBuiltInActionRunners(container);
 		registerPartnerActionRunners(context);
+
+		if (!workspace.isTrusted) {
+			context.subscriptions.push(
+				workspace.onDidGrantWorkspaceTrust(() => {
+					void setContext(ContextKeys.Untrusted, undefined);
+					container.telemetry.setGlobalAttribute('workspace.isTrusted', workspace.isTrusted);
+				}),
+			);
+		}
 
 		void showWelcomeOrWhatsNew(container, gitlensVersion, previousVersion);
 
@@ -233,8 +238,8 @@ export async function activate(context: ExtensionContext): Promise<GitLensApi | 
 }
 
 export function deactivate() {
-	// nothing to do
-	Logger.log('GitLens deactivated');
+	Logger.log('GitLens deactivating...');
+	Container.instance.deactivate();
 }
 
 // async function migrateSettings(context: ExtensionContext, previousVersion: string | undefined) {

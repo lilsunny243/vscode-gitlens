@@ -22,14 +22,12 @@ import {
 } from 'vscode';
 import { fetch, getProxyAgent } from '@env/fetch';
 import { getPlatform } from '@env/platform';
-import { configuration } from '../../configuration';
 import { Commands, ContextKeys } from '../../constants';
 import type { Container } from '../../container';
 import { setContext } from '../../context';
 import { AccountValidationError } from '../../errors';
 import type { RepositoriesChangeEvent } from '../../git/gitProviderService';
-import { Logger } from '../../logger';
-import { getLogScope } from '../../logScope';
+import { showMessage } from '../../messages';
 import type { Subscription } from '../../subscription';
 import {
 	computeSubscriptionState,
@@ -45,12 +43,15 @@ import {
 	SubscriptionState,
 } from '../../subscription';
 import { executeCommand, registerCommand } from '../../system/command';
+import { configuration } from '../../system/configuration';
 import { createFromDateDelta } from '../../system/date';
 import { gate } from '../../system/decorators/gate';
 import { debug, log } from '../../system/decorators/log';
 import { memoize } from '../../system/decorators/memoize';
 import type { Deferrable } from '../../system/function';
 import { debounce, once } from '../../system/function';
+import { Logger } from '../../system/logger';
+import { getLogScope } from '../../system/logger.scope';
 import { flatten } from '../../system/object';
 import { pluralize } from '../../system/string';
 import { openWalkthrough } from '../../system/utils';
@@ -644,6 +645,7 @@ export class SubscriptionService implements Disposable {
 				license.organizationId,
 				new Date(license.latestStartDate),
 				new Date(license.latestEndDate),
+				license.latestStatus === 'cancelled',
 			);
 		}
 
@@ -675,6 +677,7 @@ export class SubscriptionService implements Disposable {
 				license.organizationId,
 				new Date(license.latestStartDate),
 				new Date(license.latestEndDate),
+				license.latestStatus === 'cancelled',
 			);
 		}
 
@@ -897,6 +900,18 @@ export class SubscriptionService implements Disposable {
 
 		this._subscription = subscription;
 		this._etag = Date.now();
+
+		setTimeout(() => {
+			if (
+				subscription?.account != null &&
+				subscription.plan.actual.id === SubscriptionPlanId.Pro &&
+				!subscription.plan.actual.bundle &&
+				new Date(subscription.plan.actual.startedOn) >= new Date('2022-02-28T00:00:00.000Z') &&
+				new Date(subscription.plan.actual.startedOn) <= new Date('2022-04-31T00:00:00.000Z')
+			) {
+				showRenewalDiscountNotification(this.container);
+			}
+		}, 5000);
 
 		if (!silent) {
 			this.updateContext();
@@ -1157,4 +1172,17 @@ function licenseStatusPriority(status: GKLicense['latestStatus']): number {
 		case 'non_renewing':
 			return 0;
 	}
+}
+
+function showRenewalDiscountNotification(container: Container): void {
+	if (container.storage.get('plus:renewalDiscountNotificationShown', false)) return;
+
+	void container.storage.store('plus:renewalDiscountNotificationShown', true);
+
+	void showMessage(
+		'info',
+		'60% off your GitLens Pro renewal — as a thank you for being an early adopter of GitLens+. So there will be no change to your price for an additional year!',
+		undefined,
+		undefined,
+	);
 }

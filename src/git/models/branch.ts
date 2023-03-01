@@ -1,16 +1,17 @@
-import { BranchSorting, configuration, DateStyle } from '../../configuration';
+import { BranchSorting, DateStyle } from '../../config';
 import { Container } from '../../container';
-import { getLoggableName } from '../../logger';
+import { configuration } from '../../system/configuration';
 import { formatDate, fromNow } from '../../system/date';
 import { debug } from '../../system/decorators/log';
 import { memoize } from '../../system/decorators/memoize';
+import { getLoggableName } from '../../system/logger';
 import { cancellable } from '../../system/promise';
 import { sortCompare } from '../../system/string';
 import type { RemoteProvider } from '../remotes/remoteProvider';
 import type { RichRemoteProvider } from '../remotes/richRemoteProvider';
 import type { PullRequest, PullRequestState } from './pullRequest';
 import type { GitBranchReference, GitReference } from './reference';
-import { GitRevision } from './reference';
+import { shortenRevision } from './reference';
 import type { GitRemote } from './remote';
 import { getUpstreamStatus } from './status';
 
@@ -215,7 +216,7 @@ export class GitBranch implements GitBranchReference {
 }
 
 export function formatDetachedHeadName(sha: string): string {
-	return `(${GitRevision.shorten(sha)}...)`;
+	return `(${shortenRevision(sha)}...)`;
 }
 
 export function getBranchNameWithoutRemote(name: string): string {

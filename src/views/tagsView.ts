@@ -1,15 +1,16 @@
 import type { CancellationToken, ConfigurationChangeEvent, Disposable } from 'vscode';
 import { ProgressLocation, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
-import type { TagsViewConfig } from '../configuration';
-import { configuration, ViewBranchesLayout, ViewFilesLayout } from '../configuration';
+import type { TagsViewConfig } from '../config';
+import { ViewBranchesLayout, ViewFilesLayout } from '../config';
 import { Commands } from '../constants';
 import type { Container } from '../container';
 import { GitUri } from '../git/gitUri';
 import type { GitTagReference } from '../git/models/reference';
-import { GitReference } from '../git/models/reference';
+import { getReferenceLabel } from '../git/models/reference';
 import type { RepositoryChangeEvent } from '../git/models/repository';
 import { RepositoryChange, RepositoryChangeComparisonMode } from '../git/models/repository';
 import { executeCommand } from '../system/command';
+import { configuration } from '../system/configuration';
 import { gate } from '../system/decorators/gate';
 import { BranchOrTagFolderNode } from './nodes/branchOrTagFolderNode';
 import { RepositoryNode } from './nodes/repositoryNode';
@@ -210,7 +211,10 @@ export class TagsView extends ViewBase<TagsViewNode, TagsViewConfig> {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,
-				title: `Revealing ${GitReference.toString(tag, { icon: false, quoted: true })} in the side bar...`,
+				title: `Revealing ${getReferenceLabel(tag, {
+					icon: false,
+					quoted: true,
+				})} in the side bar...`,
 				cancellable: true,
 			},
 			async (progress, token) => {

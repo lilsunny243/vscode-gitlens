@@ -6,8 +6,20 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this p
 
 ## [Unreleased]
 
+## [13.3.1] - 2023-02-24
+
+### Fixed
+
+- Fixes graph issue where scroll markers do not update until mouseover when changing the `gitlens.graph.scrollMarkers.additionalTypes` setting.
+
+## [13.3.0] - 2023-02-23
+
 ### Added
 
+- ✨ Adds a preview of the all-new **Focus View**, a [GitLens+ feature](https://gitkraken.com/gitlens/plus-features) &mdash; provides you with a comprehensive list of all your most important work across your connected GitHub repos:
+  - My Pull Requests: shows all GitHub PRs opened by you, assigned to you, or awaiting your review
+  - My Issues: shows all issues created by you, assigned to you, or that mention you
+  - Open it via _GitLens+: Show Focus View_ from the Command Palette
 - Adds new _Commit Graph_ features and improvements
   - Adds a new experimental minimap of commit activity to the _Commit Graph_
   - Adds a new experimental _Changes_ column visualizing commit changes
@@ -4563,7 +4575,9 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this p
 
 - Initial release but still heavily a work in progress.
 
-[unreleased]: https://github.com/gitkraken/vscode-gitlens/compare/v13.2.0...HEAD
+[unreleased]: https://github.com/gitkraken/vscode-gitlens/compare/v13.3.1...HEAD
+[13.3.1]: https://github.com/gitkraken/vscode-gitlens/compare/v13.3.0...gitkraken:v13.3.1
+[13.3.0]: https://github.com/gitkraken/vscode-gitlens/compare/v13.2.0...gitkraken:v13.3.0
 [13.2.0]: https://github.com/gitkraken/vscode-gitlens/compare/v13.1.1...gitkraken:v13.2.0
 [13.1.1]: https://github.com/gitkraken/vscode-gitlens/compare/v13.1.0...gitkraken:v13.1.1
 [13.1.0]: https://github.com/gitkraken/vscode-gitlens/compare/v13.0.4...gitkraken:v13.1.0

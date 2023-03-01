@@ -53,6 +53,7 @@ import {
 	DidFetchNotificationType,
 	DidSearchNotificationType,
 	GraphCommitDateTimeSources,
+	GraphMinimapMarkerTypes,
 } from '../../../../plus/webviews/graph/protocol';
 import type { Subscription } from '../../../../subscription';
 import { getSubscriptionTimeRemaining, SubscriptionState } from '../../../../subscription';
@@ -337,6 +338,22 @@ export function GraphWrapper({
 
 	useEffect(() => subscriber?.(updateState), []);
 
+	const handleKeyDown = (e: KeyboardEvent) => {
+		if (e.key === 'Enter' || e.key === ' ') {
+			const sha = getActiveRowInfo(activeRow ?? state.activeRow)?.id;
+			if (sha == null) return;
+
+			// TODO@eamodio a bit of a hack since the graph container ref isn't exposed in the types
+			const graph = (graphRef.current as any)?.graphContainerRef.current;
+			if (!e.composedPath().some(el => el === graph)) return;
+
+			const row = rows.find(r => r.sha === sha);
+			if (row == null) return;
+
+			onDoubleClickRow?.(row, e.key !== 'Enter');
+		}
+	};
+
 	useEffect(() => {
 		window.addEventListener('keydown', handleKeyDown);
 
@@ -351,6 +368,7 @@ export function GraphWrapper({
 		// Loops through all the rows and group them by day and aggregate the row.stats
 		const statsByDayMap = new Map<number, GraphMinimapStats>();
 		const markersByDay = new Map<number, GraphMinimapMarker[]>();
+		const enabledMinimapMarkers: GraphMinimapMarkerTypes[] = graphConfig?.enabledMinimapMarkerTypes ?? [];
 
 		let rankedShas: {
 			head: string | undefined;
@@ -368,10 +386,10 @@ export function GraphWrapper({
 		let prevDay;
 
 		let markers;
-		let headMarkers;
-		let remoteMarkers;
+		let headMarkers: GraphMinimapMarker[];
+		let remoteMarkers: GraphMinimapMarker[];
 		let stashMarker: StashMarker | undefined;
-		let tagMarkers;
+		let tagMarkers: GraphMinimapMarker[];
 		let row: GraphRow;
 		let stat;
 		let stats;
@@ -392,20 +410,31 @@ export function GraphWrapper({
 				};
 			}
 
-			if (row.heads?.length) {
+			if (
+				row.heads?.length &&
+				(enabledMinimapMarkers.includes(GraphMinimapMarkerTypes.Head) ||
+					enabledMinimapMarkers.includes(GraphMinimapMarkerTypes.LocalBranches))
+			) {
 				rankedShas.branch = row.sha;
 
+				headMarkers = [];
+
 				// eslint-disable-next-line no-loop-func
-				headMarkers = row.heads.map<GraphMinimapMarker>(h => {
+				row.heads.forEach(h => {
 					if (h.isCurrentHead) {
 						rankedShas.head = row.sha;
 					}
 
-					return {
-						type: 'branch',
-						name: h.name,
-						current: h.isCurrentHead,
-					};
+					if (
+						enabledMinimapMarkers.includes(GraphMinimapMarkerTypes.LocalBranches) ||
+						(enabledMinimapMarkers.includes(GraphMinimapMarkerTypes.Head) && h.isCurrentHead)
+					) {
+						headMarkers.push({
+							type: 'branch',
+							name: h.name,
+							current: h.isCurrentHead && enabledMinimapMarkers.includes(GraphMinimapMarkerTypes.Head),
+						});
+					}
 				});
 
 				markers = markersByDay.get(day);
@@ -416,22 +445,33 @@ export function GraphWrapper({
 				}
 			}
 
-			if (row.remotes?.length) {
+			if (
+				row.remotes?.length &&
+				(enabledMinimapMarkers.includes(GraphMinimapMarkerTypes.Upstream) ||
+					enabledMinimapMarkers.includes(GraphMinimapMarkerTypes.RemoteBranches))
+			) {
 				rankedShas.remote = row.sha;
 
+				remoteMarkers = [];
+
 				// eslint-disable-next-line no-loop-func
-				remoteMarkers = row.remotes.map<GraphMinimapMarker>(r => {
+				row.remotes.forEach(r => {
 					let current = false;
 					if (r.current) {
 						rankedShas.remote = row.sha;
 						current = true;
 					}
 
-					return {
-						type: 'remote',
-						name: `${r.owner}/${r.name}`,
-						current: current,
-					};
+					if (
+						enabledMinimapMarkers.includes(GraphMinimapMarkerTypes.RemoteBranches) ||
+						(enabledMinimapMarkers.includes(GraphMinimapMarkerTypes.Upstream) && current)
+					) {
+						remoteMarkers.push({
+							type: 'remote',
+							name: `${r.owner}/${r.name}`,
+							current: current && enabledMinimapMarkers.includes(GraphMinimapMarkerTypes.Upstream),
+						});
+					}
 				});
 
 				markers = markersByDay.get(day);
@@ -442,7 +482,7 @@ export function GraphWrapper({
 				}
 			}
 
-			if (row.type === 'stash-node') {
+			if (row.type === 'stash-node' && enabledMinimapMarkers.includes(GraphMinimapMarkerTypes.Stashes)) {
 				stashMarker = { type: 'stash', name: row.message };
 				markers = markersByDay.get(day);
 				if (markers == null) {
@@ -452,7 +492,7 @@ export function GraphWrapper({
 				}
 			}
 
-			if (row.tags?.length) {
+			if (row.tags?.length && enabledMinimapMarkers.includes(GraphMinimapMarkerTypes.Tags)) {
 				rankedShas.tag = row.sha;
 
 				tagMarkers = row.tags.map<GraphMinimapMarker>(t => ({
@@ -499,10 +539,15 @@ export function GraphWrapper({
 		}
 
 		return { stats: statsByDayMap, markers: markersByDay };
-	}, [rows, graphConfig?.minimap]);
+	}, [rows, graphConfig?.minimap, graphConfig?.enabledMinimapMarkerTypes]);
 
 	const minimapSearchResults = useMemo(() => {
-		if (!graphConfig?.minimap) return undefined;
+		if (
+			!graphConfig?.minimap ||
+			!graphConfig.enabledMinimapMarkerTypes?.includes(GraphMinimapMarkerTypes.Highlights)
+		) {
+			return undefined;
+		}
 
 		const searchResultsByDay = new Map<number, GraphMinimapSearchResultMarker>();
 
@@ -522,7 +567,7 @@ export function GraphWrapper({
 		}
 
 		return searchResultsByDay;
-	}, [searchResults, graphConfig?.minimap]);
+	}, [searchResults, graphConfig?.minimap, graphConfig?.enabledMinimapMarkerTypes]);
 
 	const handleOnMinimapDaySelected = (e: CustomEvent<GraphMinimapDaySelectedEventDetail>) => {
 		let { sha } = e.detail;
@@ -552,22 +597,6 @@ export function GraphWrapper({
 		if (graphZoneType === REF_ZONE_TYPE || minimap.current == null) return;
 
 		minimap.current?.select(graphRow.date, true);
-	};
-
-	const handleKeyDown = (e: KeyboardEvent) => {
-		if (e.key === 'Enter' || e.key === ' ') {
-			const sha = getActiveRowInfo(activeRow ?? state.activeRow)?.id;
-			if (sha == null) return;
-
-			// TODO@eamodio a bit of a hack since the graph container ref isn't exposed in the types
-			const graph = (graphRef.current as any)?.graphContainerRef.current;
-			if (!e.composedPath().some(el => el === graph)) return;
-
-			const row = rows.find(r => r.sha === sha);
-			if (row == null) return;
-
-			onDoubleClickRow?.(row, e.key !== 'Enter');
-		}
 	};
 
 	useEffect(() => {
@@ -628,6 +657,34 @@ export function GraphWrapper({
 		if (searchQuery == null) return;
 
 		onSearchOpenInView?.(searchQuery);
+	};
+
+	const ensureSearchResultRow = async (id: string): Promise<string | undefined> => {
+		if (onEnsureRowPromise == null) return id;
+		if (ensuredIds.current.has(id)) return id;
+		if (ensuredSkippedIds.current.has(id)) return undefined;
+
+		let timeout: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+			timeout = undefined;
+			setIsLoading(true);
+		}, 500);
+
+		const e = await onEnsureRowPromise(id, false);
+		if (timeout == null) {
+			setIsLoading(false);
+		} else {
+			clearTimeout(timeout);
+		}
+
+		if (e?.id === id) {
+			ensuredIds.current.add(id);
+			return id;
+		}
+
+		if (e != null) {
+			ensuredSkippedIds.current.add(id);
+		}
+		return undefined;
 	};
 
 	const handleSearchNavigation = async (e: CustomEvent<SearchNavigationEventDetail>) => {
@@ -717,34 +774,6 @@ export function GraphWrapper({
 		if (id != null) {
 			queueMicrotask(() => graphRef.current?.selectCommits([id!], false, true));
 		}
-	};
-
-	const ensureSearchResultRow = async (id: string): Promise<string | undefined> => {
-		if (onEnsureRowPromise == null) return id;
-		if (ensuredIds.current.has(id)) return id;
-		if (ensuredSkippedIds.current.has(id)) return undefined;
-
-		let timeout: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
-			timeout = undefined;
-			setIsLoading(true);
-		}, 500);
-
-		const e = await onEnsureRowPromise(id, false);
-		if (timeout == null) {
-			setIsLoading(false);
-		} else {
-			clearTimeout(timeout);
-		}
-
-		if (e?.id === id) {
-			ensuredIds.current.add(id);
-			return id;
-		}
-
-		if (e != null) {
-			ensuredSkippedIds.current.add(id);
-		}
-		return undefined;
 	};
 
 	const handleChooseRepository = () => {

@@ -1,18 +1,21 @@
 import { EventEmitter, Uri } from 'vscode';
 import { md5 } from '@env/crypto';
 import { GravatarDefaultStyle } from './config';
-import { configuration } from './configuration';
 import { ContextKeys } from './constants';
 import { Container } from './container';
 import { getContext } from './context';
 import { getGitHubNoReplyAddressParts } from './git/remotes/github';
 import type { StoredAvatar } from './storage';
+import { configuration } from './system/configuration';
 import { debounce } from './system/function';
 import { filterMap } from './system/iterable';
 import { base64, equalsIgnoreCase } from './system/string';
 import type { ContactPresenceStatus } from './vsls/vsls';
 
 const maxSmallIntegerV8 = 2 ** 30; // Max number that can be stored in V8's smis (small integers)
+
+let avatarCache: Map<string, Avatar> | undefined;
+const avatarQueue = new Map<string, Promise<Uri>>();
 
 const _onDidFetchAvatar = new EventEmitter<{ email: string }>();
 _onDidFetchAvatar.event(
@@ -37,9 +40,7 @@ _onDidFetchAvatar.event(
 	}, 1000),
 );
 
-export namespace Avatars {
-	export const onDidFetch = _onDidFetchAvatar.event;
-}
+export const onDidFetchAvatar = _onDidFetchAvatar.event;
 
 interface Avatar {
 	uri?: Uri;
@@ -47,9 +48,6 @@ interface Avatar {
 	timestamp: number;
 	retries: number;
 }
-
-let avatarCache: Map<string, Avatar> | undefined;
-const avatarQueue = new Map<string, Promise<Uri>>();
 
 const missingGravatarHash = '00000000000000000000000000000000';
 

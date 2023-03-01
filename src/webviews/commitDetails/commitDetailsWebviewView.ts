@@ -2,7 +2,6 @@ import type { CancellationToken, ConfigurationChangeEvent, TextDocumentShowOptio
 import { CancellationTokenSource, Disposable, Uri, ViewColumn, window } from 'vscode';
 import { serializeAutolink } from '../../annotations/autolinks';
 import type { CopyShaToClipboardCommandArgs } from '../../commands';
-import { configuration } from '../../configuration';
 import { Commands, ContextKeys, CoreCommands } from '../../constants';
 import type { Container } from '../../container';
 import { getContext } from '../../context';
@@ -19,23 +18,24 @@ import { CommitFormatter } from '../../git/formatters/commitFormatter';
 import type { GitCommit } from '../../git/models/commit';
 import { isCommit } from '../../git/models/commit';
 import type { GitFileChange } from '../../git/models/file';
-import { GitFile } from '../../git/models/file';
+import { getGitFileStatusIcon } from '../../git/models/file';
 import type { IssueOrPullRequest } from '../../git/models/issue';
 import { serializeIssueOrPullRequest } from '../../git/models/issue';
 import type { PullRequest } from '../../git/models/pullRequest';
 import { serializePullRequest } from '../../git/models/pullRequest';
 import type { GitRevisionReference } from '../../git/models/reference';
-import { GitReference } from '../../git/models/reference';
+import { getReferenceFromRevision } from '../../git/models/reference';
 import type { GitRemote } from '../../git/models/remote';
-import { Logger } from '../../logger';
-import { getLogScope } from '../../logScope';
 import type { ShowInCommitGraphCommandArgs } from '../../plus/webviews/graph/graphWebview';
 import { executeCommand, executeCoreCommand } from '../../system/command';
+import { configuration } from '../../system/configuration';
 import type { DateTimeFormat } from '../../system/date';
 import { debug, log } from '../../system/decorators/log';
 import type { Deferrable } from '../../system/function';
 import { debounce } from '../../system/function';
 import { map, union } from '../../system/iterable';
+import { Logger } from '../../system/logger';
+import { getLogScope } from '../../system/logger.scope';
 import type { PromiseCancelledError } from '../../system/promise';
 import { getSettledValue } from '../../system/promise';
 import type { Serialized } from '../../system/serialize';
@@ -305,7 +305,7 @@ export class CommitDetailsWebviewView extends WebviewViewBase<State, Serialized<
 							if (this._context.commit == null) return;
 
 							void executeCommand<ShowInCommitGraphCommandArgs>(Commands.ShowInCommitGraph, {
-								ref: GitReference.fromRevision(this._context.commit),
+								ref: getReferenceFromRevision(this._context.commit),
 							});
 							break;
 						case 'more':
@@ -724,7 +724,7 @@ export class CommitDetailsWebviewView extends WebviewViewBase<State, Serialized<
 			author: { ...commit.author, avatar: avatarUri?.toString(true) },
 			// committer: { ...commit.committer, avatar: committerAvatar?.toString(true) },
 			files: commit.files?.map(({ status, repoPath, path, originalPath }) => {
-				const icon = GitFile.getStatusIcon(status);
+				const icon = getGitFileStatusIcon(status);
 				return {
 					path: path,
 					originalPath: originalPath,

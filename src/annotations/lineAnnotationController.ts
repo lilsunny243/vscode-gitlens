@@ -6,19 +6,18 @@ import type {
 	TextEditorDecorationType,
 } from 'vscode';
 import { CancellationTokenSource, DecorationRangeBehavior, Disposable, Range, window } from 'vscode';
-import { configuration } from '../configuration';
 import { GlyphChars } from '../constants';
 import type { Container } from '../container';
 import { CommitFormatter } from '../git/formatters/commitFormatter';
 import type { GitCommit } from '../git/models/commit';
 import type { PullRequest } from '../git/models/pullRequest';
-import { RichRemoteProviders } from '../git/remotes/remoteProviderConnections';
-import { Logger } from '../logger';
-import type { LogScope } from '../logScope';
-import { getLogScope } from '../logScope';
+import { configuration } from '../system/configuration';
 import { debug, log } from '../system/decorators/log';
 import { once } from '../system/event';
 import { count, every, filter } from '../system/iterable';
+import { Logger } from '../system/logger';
+import type { LogScope } from '../system/logger.scope';
+import { getLogScope } from '../system/logger.scope';
 import type { PromiseCancelledErrorWithId } from '../system/promise';
 import { PromiseCancelledError, raceAll } from '../system/promise';
 import { isTextEditor } from '../system/utils';
@@ -45,7 +44,7 @@ export class LineAnnotationController implements Disposable {
 			once(container.onReady)(this.onReady, this),
 			configuration.onDidChange(this.onConfigurationChanged, this),
 			container.fileAnnotations.onDidToggleAnnotations(this.onFileAnnotationsToggled, this),
-			RichRemoteProviders.onDidChangeConnectionState(() => void this.refresh(window.activeTextEditor)),
+			container.richRemoteProviders.onDidChangeConnectionState(() => void this.refresh(window.activeTextEditor)),
 		);
 	}
 

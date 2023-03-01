@@ -1,5 +1,5 @@
 import type { QuickInputButton, QuickPick } from 'vscode';
-import { BranchSorting, configuration, TagSorting } from '../configuration';
+import { BranchSorting, TagSorting } from '../config';
 import { Commands, GlyphChars, quickPickTitleMaxChars } from '../constants';
 import { Container } from '../container';
 import type { PlusFeatures } from '../features';
@@ -18,8 +18,17 @@ import type { GitCommit, GitStashCommit } from '../git/models/commit';
 import { isCommit, isStash } from '../git/models/commit';
 import type { GitContributor } from '../git/models/contributor';
 import type { GitLog } from '../git/models/log';
-import type { GitBranchReference, GitRevisionReference, GitTagReference } from '../git/models/reference';
-import { GitReference, GitRevision } from '../git/models/reference';
+import type { GitBranchReference, GitReference, GitRevisionReference, GitTagReference } from '../git/models/reference';
+import {
+	createReference,
+	createRevisionRange,
+	getReferenceLabel,
+	isBranchReference,
+	isRevisionRange,
+	isRevisionReference,
+	isStashReference,
+	isTagReference,
+} from '../git/models/reference';
 import { GitRemote } from '../git/models/remote';
 import { RemoteResourceType } from '../git/models/remoteResource';
 import { Repository } from '../git/models/repository';
@@ -85,6 +94,7 @@ import {
 } from '../quickpicks/remoteProviderPicker';
 import { isSubscriptionPaidPlan, isSubscriptionPreviewTrialExpired } from '../subscription';
 import { filterMap, intersection, isStringArray } from '../system/array';
+import { configuration } from '../system/configuration';
 import { formatPath } from '../system/formatPath';
 import { map } from '../system/iterable';
 import { getSettledValue } from '../system/promise';
@@ -106,7 +116,12 @@ import {
 	createInputStep,
 	createPickStep,
 	endSteps,
-	QuickCommandButtons,
+	LoadMoreQuickInputButton,
+	OpenInNewWindowQuickInputButton,
+	PickCommitQuickInputButton,
+	RevealInSideBarQuickInputButton,
+	ShowDetailsViewQuickInputButton,
+	ShowTagsToggleQuickInputButton,
 	StepResultBreak,
 } from './quickCommand';
 
@@ -438,7 +453,7 @@ export function getValidateGitReferenceFn(
 			repos = repos[0];
 		}
 
-		if (inRefMode && options?.ranges && GitRevision.isRange(value)) {
+		if (inRefMode && options?.ranges && isRevisionRange(value)) {
 			quickpick.items = [
 				createRefQuickPickItem(value, repos.path, true, {
 					alwaysShow: true,
@@ -668,7 +683,7 @@ export async function* pickBranchStep<
 	},
 ): AsyncStepResultGenerator<GitBranchReference> {
 	const branches = await getBranches(state.repo, {
-		buttons: [QuickCommandButtons.RevealInSideBar],
+		buttons: [RevealInSideBarQuickInputButton],
 		filter: filter,
 		picked: picked,
 	});
@@ -682,7 +697,7 @@ export async function* pickBranchStep<
 				? [createDirectiveQuickPickItem(Directive.Back, true), createDirectiveQuickPickItem(Directive.Cancel)]
 				: branches,
 		onDidClickItemButton: (quickpick, button, { item }) => {
-			if (button === QuickCommandButtons.RevealInSideBar) {
+			if (button === RevealInSideBarQuickInputButton) {
 				void BranchActions.reveal(item, { select: true, focus: false, expand: true });
 			}
 		},
@@ -722,7 +737,7 @@ export async function* pickBranchesStep<
 	},
 ): AsyncStepResultGenerator<GitBranchReference[]> {
 	const branches = await getBranches(state.repo, {
-		buttons: [QuickCommandButtons.RevealInSideBar],
+		buttons: [RevealInSideBarQuickInputButton],
 		filter: filter,
 		picked: picked,
 		sort: sort,
@@ -738,7 +753,7 @@ export async function* pickBranchesStep<
 				? [createDirectiveQuickPickItem(Directive.Back, true), createDirectiveQuickPickItem(Directive.Cancel)]
 				: branches,
 		onDidClickItemButton: (quickpick, button, { item }) => {
-			if (button === QuickCommandButtons.RevealInSideBar) {
+			if (button === RevealInSideBarQuickInputButton) {
 				void BranchActions.reveal(item, { select: true, focus: false, expand: true });
 			}
 		},
@@ -783,14 +798,14 @@ export async function* pickBranchOrTagStep<
 ): AsyncStepResultGenerator<GitReference> {
 	context.showTags = true;
 
-	const showTagsButton = new QuickCommandButtons.ShowTagsToggle(context.showTags);
+	const showTagsButton = new ShowTagsToggleQuickInputButton(context.showTags);
 
 	const getBranchesAndOrTagsFn = async () => {
 		return getBranchesAndOrTags(state.repo, context.showTags ? ['branches', 'tags'] : ['branches'], {
 			buttons:
 				typeof context.pickCommitForItem === 'boolean'
-					? [QuickCommandButtons.PickCommit, QuickCommandButtons.RevealInSideBar]
-					: [QuickCommandButtons.RevealInSideBar],
+					? [PickCommitQuickInputButton, RevealInSideBarQuickInputButton]
+					: [RevealInSideBarQuickInputButton],
 			filter: filter,
 			picked: picked,
 			sort: true,
@@ -816,17 +831,17 @@ export async function* pickBranchOrTagStep<
 				: branchesAndOrTags,
 		additionalButtons: [...(additionalButtons ?? []), showTagsButton],
 		onDidClickItemButton: (quickpick, button, { item }) => {
-			if (button === QuickCommandButtons.PickCommit) {
+			if (button === PickCommitQuickInputButton) {
 				context.pickCommitForItem = true;
 				return true;
 			}
 
-			if (button === QuickCommandButtons.RevealInSideBar) {
-				if (GitReference.isBranch(item)) {
+			if (button === RevealInSideBarQuickInputButton) {
+				if (isBranchReference(item)) {
 					void BranchActions.reveal(item, { select: true, focus: false, expand: true });
-				} else if (GitReference.isTag(item)) {
+				} else if (isTagReference(item)) {
 					void TagActions.reveal(item, { select: true, focus: false, expand: true });
-				} else if (GitReference.isRevision(item)) {
+				} else if (isRevisionReference(item)) {
 					void CommitActions.showDetailsView(item, { pin: false, preserveFocus: true });
 				}
 			}
@@ -858,11 +873,11 @@ export async function* pickBranchOrTagStep<
 			if (quickpick.activeItems.length === 0) return;
 
 			const item = quickpick.activeItems[0].item;
-			if (GitReference.isBranch(item)) {
+			if (isBranchReference(item)) {
 				void BranchActions.reveal(item, { select: true, focus: false, expand: true });
-			} else if (GitReference.isTag(item)) {
+			} else if (isTagReference(item)) {
 				void TagActions.reveal(item, { select: true, focus: false, expand: true });
-			} else if (GitReference.isRevision(item)) {
+			} else if (isRevisionReference(item)) {
 				void CommitActions.showDetailsView(item, { pin: false, preserveFocus: true });
 			}
 		},
@@ -894,11 +909,11 @@ export async function* pickBranchOrTagStepMultiRepo<
 ): AsyncStepResultGenerator<GitReference> {
 	context.showTags = state.repos.length === 1;
 
-	const showTagsButton = new QuickCommandButtons.ShowTagsToggle(context.showTags);
+	const showTagsButton = new ShowTagsToggleQuickInputButton(context.showTags);
 
 	const getBranchesAndOrTagsFn = () => {
 		return getBranchesAndOrTags(state.repos, context.showTags ? ['branches', 'tags'] : ['branches'], {
-			buttons: [QuickCommandButtons.RevealInSideBar],
+			buttons: [RevealInSideBarQuickInputButton],
 			// Filter out remote branches if we are going to affect multiple repos
 			filter: { branches: state.repos.length === 1 ? undefined : b => !b.remote, ...filter },
 			picked: picked ?? state.reference?.ref,
@@ -921,7 +936,7 @@ export async function* pickBranchOrTagStepMultiRepo<
 				  )}(or enter a reference using #)`,
 		matchOnDescription: true,
 		matchOnDetail: true,
-		value: value ?? (GitReference.isRevision(state.reference) ? state.reference.ref : undefined),
+		value: value ?? (isRevisionReference(state.reference) ? state.reference.ref : undefined),
 		selectValueWhenShown: true,
 		items:
 			branchesAndOrTags.length === 0
@@ -929,12 +944,12 @@ export async function* pickBranchOrTagStepMultiRepo<
 				: branchesAndOrTags,
 		additionalButtons: [showTagsButton],
 		onDidClickItemButton: (quickpick, button, { item }) => {
-			if (button === QuickCommandButtons.RevealInSideBar) {
-				if (GitReference.isBranch(item)) {
+			if (button === RevealInSideBarQuickInputButton) {
+				if (isBranchReference(item)) {
 					void BranchActions.reveal(item, { select: true, focus: false, expand: true });
-				} else if (GitReference.isTag(item)) {
+				} else if (isTagReference(item)) {
 					void TagActions.reveal(item, { select: true, focus: false, expand: true });
-				} else if (GitReference.isRevision(item)) {
+				} else if (isRevisionReference(item)) {
 					void CommitActions.showDetailsView(item, { pin: false, preserveFocus: true });
 				}
 			}
@@ -971,11 +986,11 @@ export async function* pickBranchOrTagStepMultiRepo<
 			if (quickpick.activeItems.length === 0) return;
 
 			const item = quickpick.activeItems[0].item;
-			if (GitReference.isBranch(item)) {
+			if (isBranchReference(item)) {
 				void BranchActions.reveal(item, { select: true, focus: false, expand: true });
-			} else if (GitReference.isTag(item)) {
+			} else if (isTagReference(item)) {
 				void TagActions.reveal(item, { select: true, focus: false, expand: true });
-			} else if (GitReference.isRevision(item)) {
+			} else if (isRevisionReference(item)) {
 				void CommitActions.showDetailsView(item, { pin: false, preserveFocus: true });
 			}
 		},
@@ -1025,7 +1040,7 @@ export async function* pickCommitStep<
 							picked != null &&
 								(typeof picked === 'string' ? commit.ref === picked : picked.includes(commit.ref)),
 							{
-								buttons: [QuickCommandButtons.ShowDetailsView, QuickCommandButtons.RevealInSideBar],
+								buttons: [ShowDetailsViewQuickInputButton, RevealInSideBarQuickInputButton],
 								compact: true,
 								icon: true,
 							},
@@ -1055,17 +1070,17 @@ export async function* pickCommitStep<
 		},
 		additionalButtons: [
 			...(showInSideBar?.button != null ? [showInSideBar?.button] : []),
-			...(log?.hasMore ? [QuickCommandButtons.LoadMore] : []),
+			...(log?.hasMore ? [LoadMoreQuickInputButton] : []),
 		],
 		onDidClickItemButton: (quickpick, button, item) => {
 			if (CommandQuickPickItem.is(item)) return;
 
 			switch (button) {
-				case QuickCommandButtons.ShowDetailsView:
+				case ShowDetailsViewQuickInputButton:
 					void CommitActions.showDetailsView(item.item, { pin: false, preserveFocus: true });
 					break;
 
-				case QuickCommandButtons.RevealInSideBar:
+				case RevealInSideBarQuickInputButton:
 					void CommitActions.reveal(item.item, {
 						select: true,
 						focus: false,
@@ -1104,7 +1119,7 @@ export async function* pickCommitStep<
 			}
 		},
 		onValidateValue: getValidateGitReferenceFn(state.repo, {
-			buttons: [QuickCommandButtons.ShowDetailsView, QuickCommandButtons.RevealInSideBar],
+			buttons: [ShowDetailsViewQuickInputButton, RevealInSideBarQuickInputButton],
 		}),
 	});
 	const selection: StepSelection<typeof step> = yield step;
@@ -1150,7 +1165,7 @@ export function* pickCommitsStep<
 							picked != null &&
 								(typeof picked === 'string' ? commit.ref === picked : picked.includes(commit.ref)),
 							{
-								buttons: [QuickCommandButtons.ShowDetailsView, QuickCommandButtons.RevealInSideBar],
+								buttons: [ShowDetailsViewQuickInputButton, RevealInSideBarQuickInputButton],
 								compact: true,
 								icon: true,
 							},
@@ -1177,14 +1192,14 @@ export function* pickCommitsStep<
 			}
 			return getItems(log);
 		},
-		additionalButtons: [...(log?.hasMore ? [QuickCommandButtons.LoadMore] : [])],
+		additionalButtons: [...(log?.hasMore ? [LoadMoreQuickInputButton] : [])],
 		onDidClickItemButton: (quickpick, button, { item }) => {
 			switch (button) {
-				case QuickCommandButtons.ShowDetailsView:
+				case ShowDetailsViewQuickInputButton:
 					void CommitActions.showDetailsView(item, { pin: false, preserveFocus: true });
 					break;
 
-				case QuickCommandButtons.RevealInSideBar:
+				case RevealInSideBarQuickInputButton:
 					void CommitActions.reveal(item, {
 						select: true,
 						focus: false,
@@ -1233,11 +1248,11 @@ export async function* pickContributorsStep<
 		matchOnDescription: true,
 		items: (await Container.instance.git.getContributors(state.repo.path)).map(c =>
 			createContributorQuickPickItem(c, message?.includes(c.getCoauthor()), {
-				buttons: [QuickCommandButtons.RevealInSideBar],
+				buttons: [RevealInSideBarQuickInputButton],
 			}),
 		),
 		onDidClickItemButton: (quickpick, button, { item }) => {
-			if (button === QuickCommandButtons.RevealInSideBar) {
+			if (button === RevealInSideBarQuickInputButton) {
 				void ContributorActions.reveal(item, { select: true, focus: false, expand: true });
 			}
 		},
@@ -1275,7 +1290,7 @@ export async function* pickRemoteStep<
 	},
 ): AsyncStepResultGenerator<GitRemote> {
 	const remotes = await getRemotes(state.repo, {
-		buttons: [QuickCommandButtons.RevealInSideBar],
+		buttons: [RevealInSideBarQuickInputButton],
 		filter: filter,
 		picked: picked,
 	});
@@ -1289,7 +1304,7 @@ export async function* pickRemoteStep<
 				? [createDirectiveQuickPickItem(Directive.Back, true), createDirectiveQuickPickItem(Directive.Cancel)]
 				: remotes,
 		onDidClickItemButton: (quickpick, button, { item }) => {
-			if (button === QuickCommandButtons.RevealInSideBar) {
+			if (button === RevealInSideBarQuickInputButton) {
 				void RemoteActions.reveal(item, { select: true, focus: false, expand: true });
 			}
 		},
@@ -1327,7 +1342,7 @@ export async function* pickRemotesStep<
 	},
 ): AsyncStepResultGenerator<GitRemote[]> {
 	const remotes = await getRemotes(state.repo, {
-		buttons: [QuickCommandButtons.RevealInSideBar],
+		buttons: [RevealInSideBarQuickInputButton],
 		filter: filter,
 		picked: picked,
 	});
@@ -1342,7 +1357,7 @@ export async function* pickRemotesStep<
 				? [createDirectiveQuickPickItem(Directive.Back, true), createDirectiveQuickPickItem(Directive.Cancel)]
 				: remotes,
 		onDidClickItemButton: (quickpick, button, { item }) => {
-			if (button === QuickCommandButtons.RevealInSideBar) {
+			if (button === RevealInSideBarQuickInputButton) {
 				void RemoteActions.reveal(item, { select: true, focus: false, expand: true });
 			}
 		},
@@ -1381,14 +1396,14 @@ export async function* pickRepositoryStep<
 						context.repos.map(r =>
 							createRepositoryQuickPickItem(r, r.id === active?.id, {
 								branch: true,
-								buttons: [QuickCommandButtons.RevealInSideBar],
+								buttons: [RevealInSideBarQuickInputButton],
 								fetched: true,
 								status: true,
 							}),
 						),
 				  ),
 		onDidClickItemButton: (quickpick, button, { item }) => {
-			if (button === QuickCommandButtons.RevealInSideBar) {
+			if (button === RevealInSideBarQuickInputButton) {
 				void RepositoryActions.reveal(item.path, context.associatedView, {
 					select: true,
 					focus: false,
@@ -1450,7 +1465,7 @@ export async function* pickRepositoriesStep<
 								actives.some(r => r.id === repo.id),
 								{
 									branch: true,
-									buttons: [QuickCommandButtons.RevealInSideBar],
+									buttons: [RevealInSideBarQuickInputButton],
 									fetched: true,
 									status: true,
 								},
@@ -1458,7 +1473,7 @@ export async function* pickRepositoriesStep<
 						),
 				  ),
 		onDidClickItemButton: (quickpick, button, { item }) => {
-			if (button === QuickCommandButtons.RevealInSideBar) {
+			if (button === RevealInSideBarQuickInputButton) {
 				void RepositoryActions.reveal(item.path, context.associatedView, {
 					select: true,
 					focus: false,
@@ -1517,7 +1532,7 @@ export function* pickStashStep<
 								picked != null &&
 									(typeof picked === 'string' ? commit.ref === picked : picked.includes(commit.ref)),
 								{
-									buttons: [QuickCommandButtons.ShowDetailsView],
+									buttons: [ShowDetailsViewQuickInputButton],
 									compact: true,
 									icon: true,
 								},
@@ -1525,7 +1540,7 @@ export function* pickStashStep<
 						),
 				  ],
 		onDidClickItemButton: (_quickpick, button, { item }) => {
-			if (button === QuickCommandButtons.ShowDetailsView) {
+			if (button === ShowDetailsViewQuickInputButton) {
 				void StashActions.showDetailsView(item, { pin: false, preserveFocus: true });
 			}
 		},
@@ -1559,7 +1574,7 @@ export async function* pickTagsStep<
 	},
 ): AsyncStepResultGenerator<GitTagReference[]> {
 	const tags = await getTags(state.repo, {
-		buttons: [QuickCommandButtons.RevealInSideBar],
+		buttons: [RevealInSideBarQuickInputButton],
 		filter: filter,
 		picked: picked,
 	});
@@ -1574,7 +1589,7 @@ export async function* pickTagsStep<
 				? [createDirectiveQuickPickItem(Directive.Back, true), createDirectiveQuickPickItem(Directive.Cancel)]
 				: tags,
 		onDidClickItemButton: (quickpick, button, { item }) => {
-			if (button === QuickCommandButtons.RevealInSideBar) {
+			if (button === RevealInSideBarQuickInputButton) {
 				void TagActions.reveal(item, {
 					select: true,
 					focus: false,
@@ -1618,7 +1633,7 @@ export async function* pickWorktreeStep<
 	},
 ): AsyncStepResultGenerator<GitWorktree> {
 	const worktrees = await getWorktrees(context.worktrees ?? state.repo, {
-		buttons: [QuickCommandButtons.OpenInNewWindow, QuickCommandButtons.RevealInSideBar],
+		buttons: [OpenInNewWindowQuickInputButton, RevealInSideBarQuickInputButton],
 		filter: filter,
 		includeStatus: includeStatus,
 		picked: picked,
@@ -1634,10 +1649,10 @@ export async function* pickWorktreeStep<
 				: worktrees,
 		onDidClickItemButton: (quickpick, button, { item }) => {
 			switch (button) {
-				case QuickCommandButtons.OpenInNewWindow:
+				case OpenInNewWindowQuickInputButton:
 					openWorkspace(item.uri, { location: OpenWorkspaceLocation.NewWindow });
 					break;
-				case QuickCommandButtons.RevealInSideBar:
+				case RevealInSideBarQuickInputButton:
 					void WorktreeActions.reveal(item, { select: true, focus: false, expand: true });
 					break;
 			}
@@ -1678,7 +1693,7 @@ export async function* pickWorktreesStep<
 	},
 ): AsyncStepResultGenerator<GitWorktree[]> {
 	const worktrees = await getWorktrees(context.worktrees ?? state.repo, {
-		buttons: [QuickCommandButtons.OpenInNewWindow, QuickCommandButtons.RevealInSideBar],
+		buttons: [OpenInNewWindowQuickInputButton, RevealInSideBarQuickInputButton],
 		filter: filter,
 		includeStatus: includeStatus,
 		picked: picked,
@@ -1695,10 +1710,10 @@ export async function* pickWorktreesStep<
 				: worktrees,
 		onDidClickItemButton: (quickpick, button, { item }) => {
 			switch (button) {
-				case QuickCommandButtons.OpenInNewWindow:
+				case OpenInNewWindowQuickInputButton:
 					openWorkspace(item.uri, { location: OpenWorkspaceLocation.NewWindow });
 					break;
-				case QuickCommandButtons.RevealInSideBar:
+				case RevealInSideBarQuickInputButton:
 					void WorktreeActions.reveal(item, { select: true, focus: false, expand: true });
 					break;
 			}
@@ -1728,21 +1743,21 @@ export async function* showCommitOrStashStep<
 	const step: QuickPickStep<CommitFilesQuickPickItem | GitCommandQuickPickItem | CommandQuickPickItem> =
 		createPickStep({
 			title: appendReposToTitle(
-				GitReference.toString(state.reference, {
+				getReferenceLabel(state.reference, {
 					capitalize: true,
 					icon: false,
 				}),
 				state,
 				context,
 			),
-			placeholder: GitReference.toString(state.reference, { capitalize: true, icon: false }),
+			placeholder: getReferenceLabel(state.reference, { capitalize: true, icon: false }),
 			ignoreFocusOut: true,
 			items: await getShowCommitOrStashStepItems(state),
-			// additionalButtons: [QuickCommandButtons.ShowDetailsView, QuickCommandButtons.RevealInSideBar],
+			// additionalButtons: [ShowDetailsView, RevealInSideBar],
 			onDidClickItemButton: (quickpick, button, _item) => {
 				switch (button) {
-					case QuickCommandButtons.ShowDetailsView:
-						if (GitReference.isStash(state.reference)) {
+					case ShowDetailsViewQuickInputButton:
+						if (isStashReference(state.reference)) {
 							void StashActions.showDetailsView(state.reference, { pin: false, preserveFocus: true });
 						} else {
 							void CommitActions.showDetailsView(state.reference, {
@@ -1751,8 +1766,8 @@ export async function* showCommitOrStashStep<
 							});
 						}
 						break;
-					case QuickCommandButtons.RevealInSideBar:
-						if (GitReference.isStash(state.reference)) {
+					case RevealInSideBarQuickInputButton:
+						if (isStashReference(state.reference)) {
 							void StashActions.reveal(state.reference, {
 								select: true,
 								focus: false,
@@ -1877,7 +1892,7 @@ async function getShowCommitOrStashStepItems<
 					command: 'reset',
 					state: {
 						repo: state.repo,
-						reference: GitReference.create(`${state.reference.ref}^`, state.reference.repoPath, {
+						reference: createReference(`${state.reference.ref}^`, state.reference.repoPath, {
 							refType: 'revision',
 							name: `${state.reference.name}^`,
 							message: state.reference.message,
@@ -2002,14 +2017,14 @@ export function* showCommitOrStashFilesStep<
 
 	const step: QuickPickStep<CommitFilesQuickPickItem | CommitFileQuickPickItem> = createPickStep({
 		title: appendReposToTitle(
-			GitReference.toString(state.reference, {
+			getReferenceLabel(state.reference, {
 				capitalize: true,
 				icon: false,
 			}),
 			state,
 			context,
 		),
-		placeholder: GitReference.toString(state.reference, { capitalize: true, icon: false }),
+		placeholder: getReferenceLabel(state.reference, { capitalize: true, icon: false }),
 		ignoreFocusOut: true,
 		items: [
 			new CommitFilesQuickPickItem(state.reference, {
@@ -2022,11 +2037,11 @@ export function* showCommitOrStashFilesStep<
 			) ?? []),
 		] as (CommitFilesQuickPickItem | CommitFileQuickPickItem)[],
 		matchOnDescription: true,
-		// additionalButtons: [QuickCommandButtons.ShowDetailsView, QuickCommandButtons.RevealInSideBar],
+		// additionalButtons: [ShowDetailsView, RevealInSideBar],
 		onDidClickItemButton: (quickpick, button, _item) => {
 			switch (button) {
-				case QuickCommandButtons.ShowDetailsView:
-					if (GitReference.isStash(state.reference)) {
+				case ShowDetailsViewQuickInputButton:
+					if (isStashReference(state.reference)) {
 						void StashActions.showDetailsView(state.reference, { pin: false, preserveFocus: true });
 					} else {
 						void CommitActions.showDetailsView(state.reference, {
@@ -2035,8 +2050,8 @@ export function* showCommitOrStashFilesStep<
 						});
 					}
 					break;
-				case QuickCommandButtons.RevealInSideBar:
-					if (GitReference.isStash(state.reference)) {
+				case RevealInSideBarQuickInputButton:
+					if (isStashReference(state.reference)) {
 						void StashActions.reveal(state.reference, {
 							select: true,
 							focus: false,
@@ -2073,7 +2088,7 @@ export async function* showCommitOrStashFileStep<
 >(state: State, context: Context): AsyncStepResultGenerator<CommandQuickPickItem> {
 	const step: QuickPickStep<CommandQuickPickItem> = createPickStep<CommandQuickPickItem>({
 		title: appendReposToTitle(
-			GitReference.toString(state.reference, {
+			getReferenceLabel(state.reference, {
 				capitalize: true,
 				icon: false,
 			}),
@@ -2083,17 +2098,17 @@ export async function* showCommitOrStashFileStep<
 		),
 		placeholder: `${formatPath(state.fileName, {
 			relativeTo: state.repo.path,
-		})} in ${GitReference.toString(state.reference, {
+		})} in ${getReferenceLabel(state.reference, {
 			icon: false,
 		})}`,
 		ignoreFocusOut: true,
 		items: await getShowCommitOrStashFileStepItems(state),
 		matchOnDescription: true,
-		// additionalButtons: [QuickCommandButtons.ShowDetailsView, QuickCommandButtons.RevealInSideBar],
+		// additionalButtons: [ShowDetailsView, RevealInSideBar],
 		onDidClickItemButton: (quickpick, button, _item) => {
 			switch (button) {
-				case QuickCommandButtons.ShowDetailsView:
-					if (GitReference.isStash(state.reference)) {
+				case ShowDetailsViewQuickInputButton:
+					if (isStashReference(state.reference)) {
 						void StashActions.showDetailsView(state.reference, { pin: false, preserveFocus: true });
 					} else {
 						void CommitActions.showDetailsView(state.reference, {
@@ -2102,8 +2117,8 @@ export async function* showCommitOrStashFileStep<
 						});
 					}
 					break;
-				case QuickCommandButtons.RevealInSideBar:
-					if (GitReference.isStash(state.reference)) {
+				case RevealInSideBarQuickInputButton:
+					if (isStashReference(state.reference)) {
 						void StashActions.reveal(state.reference, {
 							select: true,
 							focus: false,
@@ -2317,8 +2332,8 @@ function getShowRepositoryStatusStepItems<
 						command: 'log',
 						state: {
 							repo: state.repo,
-							reference: GitReference.create(
-								GitRevision.createRange(context.status.ref, context.status.upstream),
+							reference: createReference(
+								createRevisionRange(context.status.ref, context.status.upstream),
 								state.repo.path,
 							),
 						},
@@ -2335,8 +2350,8 @@ function getShowRepositoryStatusStepItems<
 						command: 'log',
 						state: {
 							repo: state.repo,
-							reference: GitReference.create(
-								GitRevision.createRange(context.status.upstream, context.status.ref),
+							reference: createReference(
+								createRevisionRange(context.status.upstream, context.status.ref),
 								state.repo.path,
 							),
 						},

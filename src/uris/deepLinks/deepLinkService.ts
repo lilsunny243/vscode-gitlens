@@ -1,15 +1,17 @@
 import { Disposable, env, ProgressLocation, Uri, window, workspace } from 'vscode';
-import { configuration } from '../../configuration';
 import { Commands } from '../../constants';
 import type { Container } from '../../container';
-import { GitReference } from '../../git/models/reference';
+import { getBranchNameWithoutRemote } from '../../git/models/branch';
+import type { GitReference } from '../../git/models/reference';
+import { createReference } from '../../git/models/reference';
 import type { GitRemote } from '../../git/models/remote';
 import { parseGitRemoteUrl } from '../../git/parsers/remoteParser';
-import { Logger } from '../../logger';
 import type { ShowInCommitGraphCommandArgs } from '../../plus/webviews/graph/graphWebview';
 import type { StoredDeepLinkContext } from '../../storage';
 import { executeCommand } from '../../system/command';
+import { configuration } from '../../system/configuration';
 import { once } from '../../system/event';
+import { Logger } from '../../system/logger';
 import { openWorkspace, OpenWorkspaceLocation } from '../../system/utils';
 import type { DeepLink, DeepLinkServiceContext } from './deepLink';
 import {
@@ -134,7 +136,13 @@ export class DeepLinkService implements Disposable {
 		if (targetType === DeepLinkType.Branch) {
 			// Form the target branch name using the remote name and branch name
 			const branchName = `${remote.name}/${targetId}`;
-			const branch = await repo.getBranch(branchName);
+			let branch = await repo.getBranch(branchName);
+			if (branch) {
+				return branch.sha;
+			}
+
+			// If it doesn't exist on the target remote, it may still exist locally.
+			branch = await repo.getBranch(targetId);
 			if (branch) {
 				return branch.sha;
 			}
@@ -446,7 +454,7 @@ export class DeepLinkService implements Disposable {
 					}
 
 					void (await executeCommand<ShowInCommitGraphCommandArgs>(Commands.ShowInCommitGraph, {
-						ref: GitReference.create(targetSha, repo.path),
+						ref: createReference(targetSha, repo.path),
 					}));
 
 					action = DeepLinkServiceAction.DeepLinkResolved;
@@ -501,7 +509,9 @@ export class DeepLinkService implements Disposable {
 			switch (refOrRepoPath.refType) {
 				case 'branch':
 					targetType = DeepLinkType.Branch;
-					targetId = refOrRepoPath.name;
+					targetId = refOrRepoPath.remote
+						? getBranchNameWithoutRemote(refOrRepoPath.name)
+						: refOrRepoPath.name;
 					break;
 				case 'revision':
 					targetType = DeepLinkType.Commit;

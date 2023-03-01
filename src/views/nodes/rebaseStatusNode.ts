@@ -1,7 +1,7 @@
 import type { Command } from 'vscode';
 import { MarkdownString, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState, Uri } from 'vscode';
 import type { DiffWithPreviousCommandArgs } from '../../commands';
-import { configuration, ViewFilesLayout } from '../../configuration';
+import { ViewFilesLayout } from '../../config';
 import { Commands, CoreCommands } from '../../constants';
 import { CommitFormatter } from '../../git/formatters/commitFormatter';
 import { GitUri } from '../../git/gitUri';
@@ -9,10 +9,11 @@ import type { GitBranch } from '../../git/models/branch';
 import type { GitCommit } from '../../git/models/commit';
 import type { GitRebaseStatus } from '../../git/models/rebase';
 import type { GitRevisionReference } from '../../git/models/reference';
-import { GitReference } from '../../git/models/reference';
+import { getReferenceLabel } from '../../git/models/reference';
 import type { GitStatus } from '../../git/models/status';
 import { makeHierarchical } from '../../system/array';
 import { executeCoreCommand } from '../../system/command';
+import { configuration } from '../../system/configuration';
 import { joinPaths, normalizePath } from '../../system/path';
 import { getSettledValue } from '../../system/promise';
 import { pluralize, sortCompare } from '../../system/string';
@@ -83,7 +84,7 @@ export class RebaseStatusNode extends ViewNode<ViewsWithCommits> {
 		const item = new TreeItem(
 			`${this.status?.hasConflicts ? 'Resolve conflicts to continue rebasing' : 'Rebasing'} ${
 				this.rebaseStatus.incoming != null
-					? `${GitReference.toString(this.rebaseStatus.incoming, { expand: false, icon: false })}`
+					? `${getReferenceLabel(this.rebaseStatus.incoming, { expand: false, icon: false })}`
 					: ''
 			} (${this.rebaseStatus.steps.current.number}/${this.rebaseStatus.steps.total})`,
 			TreeItemCollapsibleState.Expanded,
@@ -97,10 +98,10 @@ export class RebaseStatusNode extends ViewNode<ViewsWithCommits> {
 
 		const markdown = new MarkdownString(
 			`${`Rebasing ${
-				this.rebaseStatus.incoming != null ? GitReference.toString(this.rebaseStatus.incoming) : ''
-			}onto ${GitReference.toString(this.rebaseStatus.current)}`}\n\nStep ${
+				this.rebaseStatus.incoming != null ? getReferenceLabel(this.rebaseStatus.incoming) : ''
+			}onto ${getReferenceLabel(this.rebaseStatus.current)}`}\n\nStep ${
 				this.rebaseStatus.steps.current.number
-			} of ${this.rebaseStatus.steps.total}\\\nPaused at ${GitReference.toString(
+			} of ${this.rebaseStatus.steps.total}\\\nPaused at ${getReferenceLabel(
 				this.rebaseStatus.steps.current.commit,
 				{ icon: true },
 			)}${this.status?.hasConflicts ? `\n\n${pluralize('conflicted file', this.status.conflicts.length)}` : ''}`,

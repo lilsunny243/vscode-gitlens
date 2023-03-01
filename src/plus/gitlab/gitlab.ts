@@ -3,8 +3,6 @@ import { Disposable, Uri, window } from 'vscode';
 import type { RequestInit, Response } from '@env/fetch';
 import { fetch, getProxyAgent, wrapForForcedInsecureSSL } from '@env/fetch';
 import { isWeb } from '@env/platform';
-import { configuration } from '../../configuration';
-import { LogLevel } from '../../constants';
 import type { Container } from '../../container';
 import {
 	AuthenticationError,
@@ -20,18 +18,20 @@ import type { IssueOrPullRequest } from '../../git/models/issue';
 import { IssueOrPullRequestType } from '../../git/models/issue';
 import { PullRequest } from '../../git/models/pullRequest';
 import type { RichRemoteProvider } from '../../git/remotes/richRemoteProvider';
-import { Logger } from '../../logger';
-import type { LogScope } from '../../logScope';
-import { getLogScope } from '../../logScope';
 import {
 	showIntegrationRequestFailed500WarningMessage,
 	showIntegrationRequestTimedOutWarningMessage,
 } from '../../messages';
+import { configuration } from '../../system/configuration';
 import { debug } from '../../system/decorators/log';
+import { Logger } from '../../system/logger';
+import { LogLevel } from '../../system/logger.constants';
+import type { LogScope } from '../../system/logger.scope';
+import { getLogScope } from '../../system/logger.scope';
 import { Stopwatch } from '../../system/stopwatch';
 import { equalsIgnoreCase } from '../../system/string';
-import type { GitLabCommit, GitLabIssue, GitLabUser } from './models';
-import { GitLabMergeRequest, GitLabMergeRequestREST, GitLabMergeRequestState } from './models';
+import type { GitLabCommit, GitLabIssue, GitLabMergeRequest, GitLabMergeRequestREST, GitLabUser } from './models';
+import { fromGitLabMergeRequestREST, fromGitLabMergeRequestState, GitLabMergeRequestState } from './models';
 
 export class GitLabApi implements Disposable {
 	private _disposable: Disposable | undefined;
@@ -470,7 +470,7 @@ export class GitLabApi implements Disposable {
 				String(pr.iid),
 				pr.title,
 				pr.webUrl,
-				GitLabMergeRequest.fromState(pr.state),
+				fromGitLabMergeRequestState(pr.state),
 				new Date(pr.updatedAt),
 				// TODO@eamodio this isn't right, but GitLab doesn't seem to provide a closedAt on merge requests in GraphQL
 				pr.state !== GitLabMergeRequestState.CLOSED ? undefined : new Date(pr.updatedAt),
@@ -524,7 +524,7 @@ export class GitLabApi implements Disposable {
 				);
 			}
 
-			return GitLabMergeRequestREST.from(mrs[0], provider);
+			return fromGitLabMergeRequestREST(mrs[0], provider);
 		} catch (ex) {
 			if (ex instanceof ProviderRequestNotFoundError) return undefined;
 

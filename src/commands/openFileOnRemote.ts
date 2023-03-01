@@ -1,17 +1,17 @@
 import type { TextEditor, Uri } from 'vscode';
 import { Range } from 'vscode';
-import { UriComparer } from '../comparers';
-import { BranchSorting, TagSorting } from '../configuration';
+import { BranchSorting, TagSorting } from '../config';
 import { Commands, GlyphChars } from '../constants';
 import type { Container } from '../container';
 import { GitUri } from '../git/gitUri';
 import { getBranchNameWithoutRemote, getRemoteNameFromBranchName } from '../git/models/branch';
-import { GitRevision } from '../git/models/reference';
+import { isSha } from '../git/models/reference';
 import { RemoteResourceType } from '../git/models/remoteResource';
-import { Logger } from '../logger';
 import { showGenericErrorMessage } from '../messages';
-import { ReferencePicker } from '../quickpicks/referencePicker';
+import { showReferencePicker } from '../quickpicks/referencePicker';
 import { command, executeCommand } from '../system/command';
+import { UriComparer } from '../system/comparers';
+import { Logger } from '../system/logger';
 import { pad, splitSingle } from '../system/string';
 import { StatusFileNode } from '../views/nodes/statusFileNode';
 import type { CommandContext } from './base';
@@ -128,7 +128,7 @@ export class OpenFileOnRemoteCommand extends ActiveEditorCommand {
 					: undefined;
 			let sha = args.sha ?? gitUri.sha;
 
-			if (args.branchOrTag == null && sha != null && !GitRevision.isSha(sha) && remotes.length !== 0) {
+			if (args.branchOrTag == null && sha != null && !isSha(sha) && remotes.length !== 0) {
 				const [remoteName, branchName] = splitSingle(sha, '/');
 				if (branchName != null) {
 					const remote = remotes.find(r => r.name === remoteName);
@@ -148,7 +148,7 @@ export class OpenFileOnRemoteCommand extends ActiveEditorCommand {
 				}
 
 				if (branch?.upstream == null) {
-					const pick = await ReferencePicker.show(
+					const pick = await showReferencePicker(
 						gitUri.repoPath,
 						args.clipboard
 							? `Copy Remote File URL From${pad(GlyphChars.Dot, 2, 2)}${gitUri.relativePath}`

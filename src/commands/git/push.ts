@@ -1,14 +1,14 @@
-import { configuration } from '../../configuration';
 import { CoreGitConfiguration, GlyphChars } from '../../constants';
 import type { Container } from '../../container';
 import { getRemoteNameFromBranchName } from '../../git/models/branch';
-import type { GitBranchReference } from '../../git/models/reference';
-import { GitReference } from '../../git/models/reference';
+import type { GitBranchReference, GitReference } from '../../git/models/reference';
+import { getReferenceLabel, isBranchReference } from '../../git/models/reference';
 import type { Repository } from '../../git/models/repository';
 import { createDirectiveQuickPickItem, Directive } from '../../quickpicks/items/directive';
 import type { FlagsQuickPickItem } from '../../quickpicks/items/flags';
 import { createFlagsQuickPickItem } from '../../quickpicks/items/flags';
 import { isStringArray } from '../../system/array';
+import { configuration } from '../../system/configuration';
 import { fromNow } from '../../system/date';
 import { pad, pluralize } from '../../system/string';
 import type { ViewsWithRepositoryFolders } from '../../views/viewBase';
@@ -24,10 +24,10 @@ import {
 	appendReposToTitle,
 	canPickStepContinue,
 	endSteps,
+	FetchQuickInputButton,
 	pickRepositoriesStep,
 	pickRepositoryStep,
 	QuickCommand,
-	QuickCommandButtons,
 	StepResultBreak,
 } from '../quickCommand';
 
@@ -74,7 +74,7 @@ export class PushGitCommand extends QuickCommand<State> {
 	execute(state: State<Repository[]>) {
 		const index = state.flags.indexOf('--set-upstream');
 		if (index !== -1) {
-			if (!GitReference.isBranch(state.reference)) return Promise.resolve();
+			if (!isBranchReference(state.reference)) return Promise.resolve();
 
 			return this.container.git.pushAll(state.repos, {
 				force: false,
@@ -183,7 +183,7 @@ export class PushGitCommand extends QuickCommand<State> {
 
 			const items: FlagsQuickPickItem<Flags>[] = [];
 
-			if (GitReference.isBranch(state.reference)) {
+			if (isBranchReference(state.reference)) {
 				if (state.reference.remote) {
 					step = this.createConfirmStep(
 						appendReposToTitle(`Confirm ${context.title}`, state, context),
@@ -204,7 +204,7 @@ export class PushGitCommand extends QuickCommand<State> {
 									['--set-upstream', remote.name, branch.name],
 									{
 										label: `Publish ${branch.name} to ${remote.name}`,
-										detail: `Will publish ${GitReference.toString(branch)} to ${remote.name}`,
+										detail: `Will publish ${getReferenceLabel(branch)} to ${remote.name}`,
 									},
 								),
 							);
@@ -248,7 +248,7 @@ export class PushGitCommand extends QuickCommand<State> {
 							],
 							createDirectiveQuickPickItem(Directive.Cancel, true, {
 								label: `Cancel ${this.title}`,
-								detail: `Cannot push; ${GitReference.toString(
+								detail: `Cannot push; ${getReferenceLabel(
 									branch,
 								)} is behind ${branch.getRemoteName()} by ${pluralize('commit', branch.state.behind)}`,
 							}),
@@ -257,10 +257,9 @@ export class PushGitCommand extends QuickCommand<State> {
 						step = this.createConfirmStep(appendReposToTitle(`Confirm ${context.title}`, state, context), [
 							createFlagsQuickPickItem<Flags>(state.flags, [branch.getRemoteName()!], {
 								label: this.title,
-								detail: `Will push ${pluralize(
-									'commit',
-									branch.state.ahead,
-								)} from ${GitReference.toString(branch)} to ${branch.getRemoteName()}`,
+								detail: `Will push ${pluralize('commit', branch.state.ahead)} from ${getReferenceLabel(
+									branch,
+								)} to ${branch.getRemoteName()}`,
 							}),
 						]);
 					} else {
@@ -296,7 +295,7 @@ export class PushGitCommand extends QuickCommand<State> {
 									['--set-upstream', remote.name, status.branch],
 									{
 										label: `Publish ${branch.name} to ${remote.name}`,
-										detail: `Will publish ${GitReference.toString(branch)} to ${remote.name}`,
+										detail: `Will publish ${getReferenceLabel(branch)} to ${remote.name}`,
 									},
 								),
 							);
@@ -344,7 +343,7 @@ export class PushGitCommand extends QuickCommand<State> {
 					if (state.reference != null) {
 						pushDetails = `${
 							status?.state.ahead
-								? ` commits up to and including ${GitReference.toString(state.reference, {
+								? ` commits up to and including ${getReferenceLabel(state.reference, {
 										label: false,
 								  })}`
 								: ''
@@ -383,16 +382,16 @@ export class PushGitCommand extends QuickCommand<State> {
 						status?.state.behind
 							? createDirectiveQuickPickItem(Directive.Cancel, true, {
 									label: `Cancel ${this.title}`,
-									detail: `Cannot push; ${GitReference.toString(branch)} is behind${
+									detail: `Cannot push; ${getReferenceLabel(branch)} is behind${
 										status?.upstream ? ` ${getRemoteNameFromBranchName(status.upstream)}` : ''
 									} by ${pluralize('commit', status.state.behind)}`,
 							  })
 							: undefined,
 					);
 
-					step.additionalButtons = [QuickCommandButtons.Fetch];
+					step.additionalButtons = [FetchQuickInputButton];
 					step.onDidClickButton = async (quickpick, button) => {
-						if (button !== QuickCommandButtons.Fetch || quickpick.busy) return false;
+						if (button !== FetchQuickInputButton || quickpick.busy) return false;
 
 						quickpick.title = `Confirm ${context.title}${pad(GlyphChars.Dot, 2, 2)}Fetching${
 							GlyphChars.Ellipsis

@@ -4,11 +4,11 @@ import type { Container } from '../container';
 import { GitUri } from '../git/gitUri';
 import { splitBranchNameAndRemote } from '../git/models/branch';
 import type { GitReference } from '../git/models/reference';
-import { Logger } from '../logger';
 import { showGenericErrorMessage } from '../messages';
-import { RemotePicker } from '../quickpicks/remotePicker';
-import { RepositoryPicker } from '../quickpicks/repositoryPicker';
+import { showRemotePicker } from '../quickpicks/remotePicker';
+import { getBestRepositoryOrShowPicker } from '../quickpicks/repositoryPicker';
 import { command } from '../system/command';
+import { Logger } from '../system/logger';
 import { DeepLinkType, deepLinkTypeToString, refTypeToDeepLinkType } from '../uris/deepLinks/deepLink';
 import type { CommandContext } from './base';
 import {
@@ -64,11 +64,7 @@ export class CopyDeepLinkCommand extends ActiveEditorCommand {
 
 			type = DeepLinkType.Repository;
 			repoPath = (
-				await RepositoryPicker.getBestRepositoryOrShow(
-					gitUri,
-					editor,
-					`Copy Link to ${deepLinkTypeToString(type)}`,
-				)
+				await getBestRepositoryOrShowPicker(gitUri, editor, `Copy Link to ${deepLinkTypeToString(type)}`)
 			)?.path;
 		} else if (typeof args.refOrRepoPath === 'string') {
 			type = DeepLinkType.Repository;
@@ -102,7 +98,7 @@ export class CopyDeepLinkCommand extends ActiveEditorCommand {
 			if (args.remote && !args.prePickRemote) {
 				chosenRemote = remotes.find(r => r.name === args?.remote);
 			} else {
-				const pick = await RemotePicker.show(
+				const pick = await showRemotePicker(
 					`Copy Link to ${deepLinkTypeToString(type)}`,
 					`Choose which remote to copy the link for`,
 					remotes,

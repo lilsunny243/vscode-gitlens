@@ -3,21 +3,21 @@ import { Disposable, EventEmitter, ProgressLocation, RelativePattern, Uri, windo
 import { md5 } from '@env/crypto';
 import { ForcePushMode } from '../../@types/vscode.git.enums';
 import type { CreatePullRequestActionContext } from '../../api/gitlens';
-import { configuration } from '../../configuration';
 import { CoreGitCommands, CoreGitConfiguration, Schemes } from '../../constants';
 import type { Container } from '../../container';
 import type { FeatureAccess, Features, PlusFeatures } from '../../features';
-import { getLoggableName, Logger } from '../../logger';
-import { getLogScope } from '../../logScope';
 import { showCreatePullRequestPrompt, showGenericErrorMessage } from '../../messages';
 import { asRepoComparisonKey } from '../../repositories';
 import { filterMap, groupByMap } from '../../system/array';
 import { executeActionCommand, executeCoreGitCommand } from '../../system/command';
+import { configuration } from '../../system/configuration';
 import { formatDate, fromNow } from '../../system/date';
 import { gate } from '../../system/decorators/gate';
 import { debug, log, logName } from '../../system/decorators/log';
 import { debounce } from '../../system/function';
 import { filter, join, some } from '../../system/iterable';
+import { getLoggableName, Logger } from '../../system/logger';
+import { getLogScope } from '../../system/logger.scope';
 import { updateRecordValue } from '../../system/object';
 import { basename, normalizePath } from '../../system/path';
 import { runGitCommandInTerminal } from '../../terminal';
@@ -34,8 +34,8 @@ import type { GitDiffShortStat } from './diff';
 import type { GitLog } from './log';
 import type { GitMergeStatus } from './merge';
 import type { GitRebaseStatus } from './rebase';
-import type { GitBranchReference, GitTagReference } from './reference';
-import { GitReference } from './reference';
+import type { GitBranchReference, GitReference, GitTagReference } from './reference';
+import { getNameWithoutRemote, isBranchReference } from './reference';
 import type { GitRemote } from './remote';
 import type { GitStash } from './stash';
 import type { GitStatus } from './status';
@@ -526,12 +526,7 @@ export class Repository implements Disposable {
 			const branchesByOrigin = groupByMap(remoteBranches, b => getRemoteNameFromBranchName(b.name));
 
 			for (const [remote, branches] of branchesByOrigin.entries()) {
-				this.runTerminalCommand(
-					'push',
-					'-d',
-					remote,
-					...branches.map(b => GitReference.getNameWithoutRemote(b)),
-				);
+				this.runTerminalCommand('push', '-d', remote, ...branches.map(b => getNameWithoutRemote(b)));
 			}
 		}
 	}
@@ -825,7 +820,7 @@ export class Repository implements Disposable {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,
-				title: GitReference.isBranch(opts.reference)
+				title: isBranchReference(opts.reference)
 					? `${opts.publish != null ? 'Publishing ' : 'Pushing '}${opts.reference.name}...`
 					: `Pushing ${this.formattedName}...`,
 			},
@@ -872,7 +867,7 @@ export class Repository implements Disposable {
 		};
 	}) {
 		try {
-			if (GitReference.isBranch(options?.reference)) {
+			if (isBranchReference(options?.reference)) {
 				const repo = await this.container.git.getOrOpenScmRepository(this.path);
 				if (repo == null) return;
 

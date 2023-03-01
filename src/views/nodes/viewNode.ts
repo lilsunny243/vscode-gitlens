@@ -5,16 +5,16 @@ import type { RepositoriesChangeEvent } from '../../git/gitProviderService';
 import type { GitUri } from '../../git/gitUri';
 import { unknownGitUri } from '../../git/gitUri';
 import type { GitFile } from '../../git/models/file';
-import type { GitRevisionReference } from '../../git/models/reference';
-import { GitReference } from '../../git/models/reference';
+import type { GitReference, GitRevisionReference } from '../../git/models/reference';
+import { getReferenceLabel } from '../../git/models/reference';
 import { GitRemote } from '../../git/models/remote';
 import type { RepositoryChangeEvent } from '../../git/models/repository';
 import { Repository, RepositoryChange, RepositoryChangeComparisonMode } from '../../git/models/repository';
-import { getLoggableName } from '../../logger';
 import type { SubscriptionChangeEvent } from '../../plus/subscription/subscriptionService';
 import { gate } from '../../system/decorators/gate';
 import { debug, log, logName } from '../../system/decorators/log';
 import { is as isA, szudzikPairing } from '../../system/function';
+import { getLoggableName } from '../../system/logger';
 import { pad } from '../../system/string';
 import type { TreeViewNodeCollapsibleStateChangeEvent, View } from '../viewBase';
 
@@ -197,7 +197,7 @@ export abstract class ViewRefNode<
 	}
 
 	override toString(): string {
-		return `${super.toString()}:${GitReference.toString(this.ref, false)}`;
+		return `${super.toString()}:${getReferenceLabel(this.ref, false)}`;
 	}
 }
 

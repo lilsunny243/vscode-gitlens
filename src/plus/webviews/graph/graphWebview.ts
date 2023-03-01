@@ -27,8 +27,7 @@ import type {
 	ShowCommitsInViewCommandArgs,
 } from '../../../commands';
 import { parseCommandContext } from '../../../commands/base';
-import type { Config } from '../../../configuration';
-import { configuration } from '../../../configuration';
+import type { Config } from '../../../config';
 import { Commands, ContextKeys, CoreCommands, CoreGitCommands, GlyphChars } from '../../../constants';
 import type { Container } from '../../../container';
 import { getContext, onDidChangeContext } from '../../../context';
@@ -41,23 +40,31 @@ import * as TagActions from '../../../git/actions/tag';
 import * as WorktreeActions from '../../../git/actions/worktree';
 import { GitSearchError } from '../../../git/errors';
 import { getBranchId, getBranchNameWithoutRemote, getRemoteNameFromBranchName } from '../../../git/models/branch';
+import { uncommitted } from '../../../git/models/constants';
 import { GitContributor } from '../../../git/models/contributor';
 import type { GitGraph } from '../../../git/models/graph';
 import { GitGraphRowType } from '../../../git/models/graph';
 import type {
 	GitBranchReference,
+	GitReference,
 	GitRevisionReference,
 	GitStashReference,
 	GitTagReference,
 } from '../../../git/models/reference';
-import { GitReference, GitRevision } from '../../../git/models/reference';
+import {
+	createReference,
+	getReferenceFromBranch,
+	getReferenceLabel,
+	isSha,
+	shortenRevision,
+} from '../../../git/models/reference';
 import { getRemoteIconUri } from '../../../git/models/remote';
 import { RemoteResourceType } from '../../../git/models/remoteResource';
 import type { RepositoryChangeEvent, RepositoryFileSystemChangeEvent } from '../../../git/models/repository';
 import { Repository, RepositoryChange, RepositoryChangeComparisonMode } from '../../../git/models/repository';
 import type { GitSearch } from '../../../git/search';
 import { getSearchQueryComparisonKey } from '../../../git/search';
-import { RepositoryPicker } from '../../../quickpicks/repositoryPicker';
+import { showRepositoryPicker } from '../../../quickpicks/repositoryPicker';
 import type { StoredGraphFilters, StoredGraphIncludeOnlyRef } from '../../../storage';
 import {
 	executeActionCommand,
@@ -66,6 +73,7 @@ import {
 	executeCoreGitCommand,
 	registerCommand,
 } from '../../../system/command';
+import { configuration } from '../../../system/configuration';
 import { gate } from '../../../system/decorators/gate';
 import { debug } from '../../../system/decorators/log';
 import type { Deferrable } from '../../../system/function';
@@ -145,6 +153,7 @@ import {
 	GetMissingAvatarsCommandType,
 	GetMissingRefsMetadataCommandType,
 	GetMoreRowsCommandType,
+	GraphMinimapMarkerTypes,
 	GraphRefMetadataTypes,
 	GraphScrollMarkerTypes,
 	SearchCommandType,
@@ -271,7 +280,7 @@ export class GraphWebview extends WebviewBase<State> {
 					} else {
 						this.repository = this.container.git.getRepository(args.ref.repoPath);
 						id = args.ref.ref;
-						if (!GitRevision.isSha(id)) {
+						if (!isSha(id)) {
 							id = await this.container.git.resolveReference(args.ref.repoPath, id, undefined, {
 								force: true,
 							});
@@ -612,7 +621,8 @@ export class GraphWebview extends WebviewBase<State> {
 			configuration.changed(e, 'graph.pullRequests.enabled') ||
 			configuration.changed(e, 'graph.showRemoteNames') ||
 			configuration.changed(e, 'graph.showUpstreamStatus') ||
-			configuration.changed(e, 'graph.experimental.minimap.enabled')
+			configuration.changed(e, 'graph.experimental.minimap.enabled') ||
+			configuration.changed(e, 'graph.experimental.minimap.additionalTypes')
 		) {
 			void this.notifyDidChangeConfiguration();
 
@@ -888,7 +898,7 @@ export class GraphWebview extends WebviewBase<State> {
 							webviewItem: 'gitlens:upstreamStatus',
 							webviewItemValue: {
 								type: 'upstreamStatus',
-								ref: GitReference.fromBranch(branch),
+								ref: getReferenceFromBranch(branch),
 								ahead: branch.state.ahead,
 								behind: branch.state.behind,
 							},
@@ -1062,7 +1072,7 @@ export class GraphWebview extends WebviewBase<State> {
 				a.index - b.index,
 		);
 
-		const pick = await RepositoryPicker.show(
+		const pick = await showRepositoryPicker(
 			`Switch Repository ${GlyphChars.Dot} ${this.repository?.name}`,
 			'Choose a repository to switch to',
 			repositories,
@@ -1124,17 +1134,17 @@ export class GraphWebview extends WebviewBase<State> {
 
 		switch (type) {
 			case GitGraphRowType.Stash:
-				return GitReference.create(id, repoPath, {
+				return createReference(id, repoPath, {
 					refType: 'stash',
 					name: id,
 					number: undefined,
 				});
 
 			case GitGraphRowType.Working:
-				return GitReference.create(GitRevision.uncommitted, repoPath, { refType: 'revision' });
+				return createReference(uncommitted, repoPath, { refType: 'revision' });
 
 			default:
-				return GitReference.create(id, repoPath, { refType: 'revision' });
+				return createReference(id, repoPath, { refType: 'revision' });
 		}
 	}
 
@@ -1656,6 +1666,7 @@ export class GraphWebview extends WebviewBase<State> {
 			enableMultiSelection: false,
 			highlightRowsOnRefHover: configuration.get('graph.highlightRowsOnRefHover'),
 			minimap: configuration.get('graph.experimental.minimap.enabled'),
+			enabledMinimapMarkerTypes: this.getEnabledGraphMinimapMarkers(),
 			scrollRowPadding: configuration.get('graph.scrollRowPadding'),
 			enabledScrollMarkerTypes: this.getEnabledGraphScrollMarkers(),
 			showGhostRefsOnRowHover: configuration.get('graph.showGhostRefsOnRowHover'),
@@ -1672,13 +1683,27 @@ export class GraphWebview extends WebviewBase<State> {
 		const markers: GraphScrollMarkerTypes[] = [
 			GraphScrollMarkerTypes.Selection,
 			GraphScrollMarkerTypes.Highlights,
+			GraphScrollMarkerTypes.Head,
+			GraphScrollMarkerTypes.Upstream,
 			...(configuration.get('graph.scrollMarkers.additionalTypes') as unknown as GraphScrollMarkerTypes[]),
 		];
 
-		// Head and upstream are under the same setting, but separate markers in the component
-		if (markers.includes(GraphScrollMarkerTypes.Head)) {
-			markers.push(GraphScrollMarkerTypes.Upstream);
-		}
+		return markers;
+	}
+
+	private getEnabledGraphMinimapMarkers(): GraphMinimapMarkerTypes[] {
+		const markersEnabled = configuration.get('graph.experimental.minimap.enabled');
+		if (!markersEnabled) return [];
+
+		const markers: GraphMinimapMarkerTypes[] = [
+			GraphMinimapMarkerTypes.Selection,
+			GraphMinimapMarkerTypes.Highlights,
+			GraphMinimapMarkerTypes.Head,
+			GraphMinimapMarkerTypes.Upstream,
+			...(configuration.get(
+				'graph.experimental.minimap.additionalTypes',
+			) as unknown as GraphMinimapMarkerTypes[]),
+		];
 
 		return markers;
 	}
@@ -1736,11 +1761,7 @@ export class GraphWebview extends WebviewBase<State> {
 				webviewItem: 'gitlens:wip',
 				webviewItemValue: {
 					type: 'commit',
-					ref: this.getRevisionReference(
-						this.repository.path,
-						GitRevision.uncommitted,
-						GitGraphRowType.Working,
-					)!,
+					ref: this.getRevisionReference(this.repository.path, uncommitted, GitGraphRowType.Working)!,
 				},
 			}),
 		};
@@ -1773,8 +1794,7 @@ export class GraphWebview extends WebviewBase<State> {
 		// If we have a set of data refresh to the same set
 		const limit = Math.max(defaultItemLimit, this._graph?.ids.size ?? defaultItemLimit);
 
-		const ref =
-			this._selectedId == null || this._selectedId === GitRevision.uncommitted ? 'HEAD' : this._selectedId;
+		const ref = this._selectedId == null || this._selectedId === uncommitted ? 'HEAD' : this._selectedId;
 
 		const columns = this.getColumns();
 		const columnSettings = this.getColumnSettings(columns);
@@ -1943,7 +1963,7 @@ export class GraphWebview extends WebviewBase<State> {
 		if (this._selectedId === id) return;
 
 		this._selectedId = id;
-		if (id === GitRevision.uncommitted) {
+		if (id === uncommitted) {
 			id = GitGraphRowType.Working;
 		}
 		this._selectedRows = id != null ? { [id]: true } : undefined;
@@ -2074,7 +2094,7 @@ export class GraphWebview extends WebviewBase<State> {
 			if (ref.upstream != null) {
 				return RepoActions.rebase(
 					ref.repoPath,
-					GitReference.create(ref.upstream.name, ref.repoPath, {
+					createReference(ref.upstream.name, ref.repoPath, {
 						refType: 'branch',
 						name: ref.upstream.name,
 						remote: true,
@@ -2140,7 +2160,7 @@ export class GraphWebview extends WebviewBase<State> {
 		if (ref == null) return Promise.resolve();
 
 		let sha = ref.ref;
-		if (!GitRevision.isSha(sha)) {
+		if (!isSha(sha)) {
 			sha = await this.container.git.resolveReference(ref.repoPath, sha, undefined, { force: true });
 		}
 
@@ -2233,7 +2253,7 @@ export class GraphWebview extends WebviewBase<State> {
 
 		return RepoActions.reset(
 			ref.repoPath,
-			GitReference.create(`${ref.ref}^`, ref.repoPath, {
+			createReference(`${ref.ref}^`, ref.repoPath, {
 				refType: 'revision',
 				name: `${ref.name}^`,
 				message: ref.message,
@@ -2314,7 +2334,7 @@ export class GraphWebview extends WebviewBase<State> {
 
 		if (commit?.hash !== ref.ref) {
 			void window.showWarningMessage(
-				`Commit ${GitReference.toString(ref, {
+				`Commit ${getReferenceLabel(ref, {
 					capitalize: true,
 					icon: false,
 				})} cannot be undone, because it is no longer the most recent commit.`,
@@ -2443,7 +2463,10 @@ export class GraphWebview extends WebviewBase<State> {
 
 		return this.container.searchAndCompareView.compare(
 			ref.repoPath,
-			{ ref: commonAncestor, label: `ancestry with ${ref.ref} (${GitRevision.shorten(commonAncestor)})` },
+			{
+				ref: commonAncestor,
+				label: `ancestry with ${ref.ref} (${shortenRevision(commonAncestor)})`,
+			},
 			'',
 		);
 	}

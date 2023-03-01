@@ -1,19 +1,20 @@
 import { Uri } from 'vscode';
 import { decodeUtf8Hex, encodeUtf8Hex } from '@env/hex';
-import { UriComparer } from '../comparers';
 import { Schemes } from '../constants';
 import { Container } from '../container';
-import { Logger } from '../logger';
 import type { GitHubAuthorityMetadata } from '../plus/remotehub';
+import { UriComparer } from '../system/comparers';
 import { debug } from '../system/decorators/log';
 import { memoize } from '../system/decorators/memoize';
 import { formatPath } from '../system/formatPath';
+import { Logger } from '../system/logger';
 import { basename, getBestPath, normalizePath, relativeDir, splitPath } from '../system/path';
 // import { CharCode } from '../system/string';
 import { isVirtualUri } from '../system/utils';
 import type { RevisionUriData } from './gitProvider';
+import { uncommittedStaged } from './models/constants';
 import type { GitFile } from './models/file';
-import { GitRevision } from './models/reference';
+import { isUncommitted, isUncommittedStaged, shortenRevision } from './models/reference';
 
 const slash = 47; //CharCode.Slash;
 
@@ -69,7 +70,7 @@ export class GitUri extends (Uri as any as UriEx) {
 				ref = commitOrRepoPath.sha;
 			}
 
-			if (GitRevision.isUncommittedStaged(ref) || !GitRevision.isUncommitted(ref)) {
+			if (isUncommittedStaged(ref) || !isUncommitted(ref)) {
 				this.sha = ref;
 			}
 
@@ -89,7 +90,7 @@ export class GitUri extends (Uri as any as UriEx) {
 				ref = commitOrRepoPath.sha;
 			}
 
-			if (ref && (GitRevision.isUncommittedStaged(ref) || !GitRevision.isUncommitted(ref))) {
+			if (ref && (isUncommittedStaged(ref) || !isUncommitted(ref))) {
 				this.sha = ref;
 			}
 
@@ -154,7 +155,7 @@ export class GitUri extends (Uri as any as UriEx) {
 			fragment: uri.fragment,
 		});
 		this.repoPath = commitOrRepoPath.repoPath;
-		if (GitRevision.isUncommittedStaged(commitOrRepoPath.sha) || !GitRevision.isUncommitted(commitOrRepoPath.sha)) {
+		if (isUncommittedStaged(commitOrRepoPath.sha) || !isUncommitted(commitOrRepoPath.sha)) {
 			this.sha = commitOrRepoPath.sha;
 		}
 	}
@@ -171,12 +172,12 @@ export class GitUri extends (Uri as any as UriEx) {
 
 	@memoize()
 	get isUncommitted(): boolean {
-		return GitRevision.isUncommitted(this.sha);
+		return isUncommitted(this.sha);
 	}
 
 	@memoize()
 	get isUncommittedStaged(): boolean {
-		return GitRevision.isUncommittedStaged(this.sha);
+		return isUncommittedStaged(this.sha);
 	}
 
 	@memoize()
@@ -186,7 +187,7 @@ export class GitUri extends (Uri as any as UriEx) {
 
 	@memoize()
 	get shortSha(): string {
-		return GitRevision.shorten(this.sha);
+		return shortenRevision(this.sha);
 	}
 
 	@memoize()
@@ -268,7 +269,7 @@ export class GitUri extends (Uri as any as UriEx) {
 				switch (data.ref) {
 					case '':
 					case '~':
-						ref = GitRevision.uncommittedStaged;
+						ref = uncommittedStaged;
 						break;
 
 					case null:

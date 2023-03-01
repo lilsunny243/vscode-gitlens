@@ -1,5 +1,5 @@
+export const commandPrefix = 'gitlens';
 export const quickPickTitleMaxChars = 80;
-export const slowCallWarningThreshold = 500;
 
 export const ImageMimetypes: Record<string, string> = {
 	'.png': 'image/png',
@@ -184,6 +184,7 @@ export const enum Commands {
 	PlusValidate = 'gitlens.plus.validate',
 	QuickOpenFileHistory = 'gitlens.quickOpenFileHistory',
 	RefreshGraph = 'gitlens.graph.refresh',
+	RefreshFocus = 'gitlens.focus.refresh',
 	RefreshHover = 'gitlens.refreshHover',
 	RefreshTimelinePage = 'gitlens.refreshTimelinePage',
 	ResetAvatarCache = 'gitlens.resetAvatarCache',
@@ -240,6 +241,7 @@ export const enum Commands {
 	ShowTimelineView = 'gitlens.showTimelineView',
 	ShowGraphPage = 'gitlens.showGraphPage',
 	ShowWelcomePage = 'gitlens.showWelcomePage',
+	ShowFocusPage = 'gitlens.showFocusPage',
 	StashApply = 'gitlens.stashApply',
 	StashSave = 'gitlens.stashSave',
 	StashSaveFiles = 'gitlens.stashSaveFiles',
@@ -283,6 +285,7 @@ export const enum ContextKeys {
 	DisabledToggleCodeLens = 'gitlens:disabledToggleCodeLens',
 	Disabled = 'gitlens:disabled',
 	Enabled = 'gitlens:enabled',
+	FocusFocused = 'gitlens:focus:focused',
 	HasConnectedRemotes = 'gitlens:hasConnectedRemotes',
 	HasRemotes = 'gitlens:hasRemotes',
 	HasRichRemotes = 'gitlens:hasRichRemotes',
@@ -398,14 +401,6 @@ export const enum GlyphChars {
 	SquareWithTopShadow = '\u2750',
 	Warning = '\u26a0',
 	ZeroWidthSpace = '\u200b',
-}
-
-export const enum LogLevel {
-	Off = 'off',
-	Error = 'error',
-	Warn = 'warn',
-	Info = 'info',
-	Debug = 'debug',
 }
 
 export const enum Schemes {

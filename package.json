@@ -2,7 +2,7 @@
 	"name": "gitlens",
 	"displayName": "GitLens — Git supercharged",
 	"description": "Supercharge Git within VS Code — Visualize code authorship at a glance via Git blame annotations and CodeLens, seamlessly navigate and explore Git repositories, gain valuable insights via rich visualizations and powerful comparison commands, and so much more",
-	"version": "13.2.0",
+	"version": "13.3.1",
 	"engines": {
 		"vscode": "^1.72.0"
 	},
@@ -67,6 +67,7 @@
 		"onWebviewPanel:gitlens.welcome",
 		"onWebviewPanel:gitlens.settings",
 		"onWebviewPanel:gitlens.graph",
+		"onWebviewPanel:gitlens.focus",
 		"onCommand:gitlens.plus.learn",
 		"onCommand:gitlens.plus.loginOrSignUp",
 		"onCommand:gitlens.plus.logout",
@@ -75,6 +76,7 @@
 		"onCommand:gitlens.plus.purchase",
 		"onCommand:gitlens.getStarted",
 		"onCommand:gitlens.showGraphPage",
+		"onCommand:gitlens.showFocusPage",
 		"onCommand:gitlens.showSettingsPage",
 		"onCommand:gitlens.showSettingsPage#views",
 		"onCommand:gitlens.showSettingsPage#autolinks",
@@ -2226,20 +2228,18 @@
 					"gitlens.graph.scrollMarkers.additionalTypes": {
 						"type": "array",
 						"default": [
-							"head",
-							"localBranches"
+							"localBranches",
+							"stashes"
 						],
 						"items": {
 							"type": "string",
 							"enum": [
-								"head",
 								"localBranches",
 								"remoteBranches",
 								"tags",
 								"stashes"
 							],
 							"enumDescriptions": [
-								"Marks the location of the current HEAD and its upstream",
 								"Marks the location of local branches",
 								"Marks the location of remote branches",
 								"Marks the location of tags",
@@ -2247,7 +2247,7 @@
 							]
 						},
 						"minItems": 0,
-						"maxItems": 5,
+						"maxItems": 4,
 						"uniqueItems": true,
 						"markdownDescription": "Specifies additional markers to show on the scrollbar in the _Commit Graph_",
 						"scope": "window",
@@ -2387,6 +2387,34 @@
 						"markdownDescription": "Specifies whether to show an experimental minimap of commit activity above the _Commit Graph_",
 						"scope": "window",
 						"order": 100
+					},
+					"gitlens.graph.experimental.minimap.additionalTypes": {
+						"type": "array",
+						"default": [
+							"localBranches",
+							"stashes"
+						],
+						"items": {
+							"type": "string",
+							"enum": [
+								"localBranches",
+								"remoteBranches",
+								"tags",
+								"stashes"
+							],
+							"enumDescriptions": [
+								"Marks the location of local branches",
+								"Marks the location of remote branches",
+								"Marks the location of tags",
+								"Marks the location of stashes"
+							]
+						},
+						"minItems": 0,
+						"maxItems": 4,
+						"uniqueItems": true,
+						"markdownDescription": "Specifies additional markers to show on the minimap in the _Commit Graph_",
+						"scope": "window",
+						"order": 101
 					}
 				}
 			},
@@ -4457,6 +4485,12 @@
 				"title": "Open in Commit Graph",
 				"category": "GitLens+",
 				"icon": "$(gitlens-graph)"
+			},
+			{
+				"command": "gitlens.showFocusPage",
+				"title": "Show Focus View",
+				"category": "GitLens+",
+				"icon": "$(layers)"
 			},
 			{
 				"command": "gitlens.showSettingsPage",
@@ -6830,6 +6864,12 @@
 				"icon": "$(copy)"
 			},
 			{
+				"command": "gitlens.focus.refresh",
+				"title": "Refresh",
+				"category": "GitLens",
+				"icon": "$(refresh)"
+			},
+			{
 				"command": "gitlens.graph.copyRemoteBranchUrl",
 				"title": "Copy Remote Branch URL",
 				"category": "GitLens",
@@ -7382,6 +7422,10 @@
 				{
 					"command": "gitlens.showInCommitGraph",
 					"when": "false"
+				},
+				{
+					"command": "gitlens.showFocusPage",
+					"when": "gitlens:enabled"
 				},
 				{
 					"command": "gitlens.showSettingsPage#views",
@@ -8992,6 +9036,10 @@
 					"when": "false"
 				},
 				{
+					"command": "gitlens.focus.refresh",
+					"when": "false"
+				},
+				{
 					"command": "gitlens.graph.copyRemoteBranchUrl",
 					"when": "false"
 				},
@@ -9419,6 +9467,11 @@
 				{
 					"command": "gitlens.showSettingsPage#commit-graph",
 					"when": "gitlens:webview:graph:active",
+					"group": "navigation@-98"
+				},
+				{
+					"command": "gitlens.focus.refresh",
+					"when": "gitlens:focus:focused",
 					"group": "navigation@-98"
 				}
 			],
@@ -13273,7 +13326,7 @@
 		"vscode:prepublish": "yarn run bundle"
 	},
 	"dependencies": {
-		"@gitkraken/gitkraken-components": "6.0.2",
+		"@gitkraken/gitkraken-components": "6.0.3",
 		"@microsoft/fast-element": "1.11.0",
 		"@microsoft/fast-react-wrapper": "0.3.16-0",
 		"@octokit/core": "4.2.0",
@@ -13304,11 +13357,11 @@
 		"@types/react-dom": "17.0.17",
 		"@types/sortablejs": "1.15.0",
 		"@types/vscode": "1.72.0",
-		"@typescript-eslint/eslint-plugin": "5.52.0",
-		"@typescript-eslint/parser": "5.52.0",
-		"@vscode/test-electron": "2.2.3",
-		"@vscode/test-web": "0.0.34",
-		"@vscode/vsce": "2.17.0",
+		"@typescript-eslint/eslint-plugin": "5.54.0",
+		"@typescript-eslint/parser": "5.54.0",
+		"@vscode/test-electron": "2.3.0",
+		"@vscode/test-web": "0.0.35",
+		"@vscode/vsce": "2.18.0",
 		"circular-dependency-plugin": "5.2.2",
 		"clean-webpack-plugin": "4.0.0",
 		"concurrently": "7.6.0",
@@ -13317,10 +13370,10 @@
 		"css-loader": "6.7.3",
 		"css-minimizer-webpack-plugin": "4.2.2",
 		"cssnano-preset-advanced": "5.3.10",
-		"esbuild": "0.17.8",
+		"esbuild": "0.17.10",
 		"esbuild-loader": "3.0.1",
-		"esbuild-sass-plugin": "2.5.0",
-		"eslint": "8.34.0",
+		"esbuild-sass-plugin": "2.6.0",
+		"eslint": "8.35.0",
 		"eslint-cli": "1.1.1",
 		"eslint-config-prettier": "8.6.0",
 		"eslint-import-resolver-typescript": "3.5.3",

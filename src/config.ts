@@ -1,5 +1,5 @@
-import { LogLevel } from './constants';
 import type { DateTimeFormat } from './system/date';
+import { LogLevel } from './system/logger.constants';
 
 export interface Config {
 	autolinks: AutolinkReference[] | null;
@@ -299,6 +299,16 @@ export const enum GraphScrollMarkerTypes {
 	Tags = 'tags',
 }
 
+export const enum GraphMinimapTypes {
+	Selection = 'selection',
+	Head = 'head',
+	LocalBranches = 'localBranches',
+	RemoteBranches = 'remoteBranches',
+	Highlights = 'highlights',
+	Stashes = 'stashes',
+	Tags = 'tags',
+}
+
 export const enum GravatarDefaultStyle {
 	Faces = 'wavatar',
 	Geometric = 'identicon',
@@ -406,6 +416,7 @@ export interface GraphConfig {
 	experimental: {
 		minimap: {
 			enabled: boolean;
+			additionalTypes: GraphMinimapTypes[];
 		};
 	};
 	highlightRowsOnRefHover: boolean;

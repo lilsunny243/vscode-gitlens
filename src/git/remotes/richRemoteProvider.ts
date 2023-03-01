@@ -2,23 +2,22 @@ import type { AuthenticationSession, AuthenticationSessionsChangeEvent, Event, M
 import { authentication, EventEmitter, window } from 'vscode';
 import { wrapForForcedInsecureSSL } from '@env/fetch';
 import { isWeb } from '@env/platform';
-import { configuration } from '../../configuration';
 import type { Container } from '../../container';
 import { AuthenticationError, ProviderRequestClientError } from '../../errors';
-import { Logger } from '../../logger';
-import { getLogScope } from '../../logScope';
 import { showIntegrationDisconnectedTooManyFailedRequestsWarningMessage } from '../../messages';
 import type { IntegrationAuthenticationSessionDescriptor } from '../../plus/integrationAuthentication';
 import { isSubscriptionPaidPlan, isSubscriptionPreviewTrialExpired } from '../../subscription';
+import { configuration } from '../../system/configuration';
 import { gate } from '../../system/decorators/gate';
 import { debug, log } from '../../system/decorators/log';
+import { Logger } from '../../system/logger';
+import { getLogScope } from '../../system/logger.scope';
 import { isPromise } from '../../system/promise';
 import type { Account } from '../models/author';
 import type { DefaultBranch } from '../models/defaultBranch';
-import type { IssueOrPullRequest } from '../models/issue';
-import type { PullRequest, PullRequestState } from '../models/pullRequest';
+import type { IssueOrPullRequest, SearchedIssue } from '../models/issue';
+import type { PullRequest, PullRequestState, SearchedPullRequest } from '../models/pullRequest';
 import { RemoteProvider } from './remoteProvider';
-import { RichRemoteProviders } from './remoteProviderConnections';
 
 // TODO@eamodio revisit how once authenticated, all remotes are always connected, even after a restart
 
@@ -47,7 +46,7 @@ export abstract class RichRemoteProvider extends RemoteProvider {
 				}
 			}),
 			// TODO@eamodio revisit how connections are linked or not
-			RichRemoteProviders.onDidChangeConnectionState(e => {
+			container.richRemoteProviders.onDidChangeConnectionState(e => {
 				if (e.key !== this.key) return;
 
 				if (e.reason === 'disconnected') {
@@ -154,7 +153,7 @@ export abstract class RichRemoteProvider extends RemoteProvider {
 
 			this._onDidChange.fire();
 			if (!options?.silent && !options?.currentSessionOnly) {
-				RichRemoteProviders.disconnected(this.key);
+				this.container.richRemoteProviders.disconnected(this.key);
 			}
 		}
 	}
@@ -285,6 +284,48 @@ export abstract class RichRemoteProvider extends RemoteProvider {
 	protected abstract getProviderDefaultBranch({
 		accessToken,
 	}: AuthenticationSession): Promise<DefaultBranch | undefined>;
+
+	@gate()
+	@debug()
+	async searchMyPullRequests(): Promise<SearchedPullRequest[] | undefined> {
+		const scope = getLogScope();
+
+		try {
+			const pullRequests = await this.searchProviderMyPullRequests(this._session!);
+			this.resetRequestExceptionCount();
+			return pullRequests;
+		} catch (ex) {
+			Logger.error(ex, scope);
+
+			if (ex instanceof AuthenticationError || ex instanceof ProviderRequestClientError) {
+				this.trackRequestException();
+			}
+			return undefined;
+		}
+	}
+	protected abstract searchProviderMyPullRequests(
+		session: AuthenticationSession,
+	): Promise<SearchedPullRequest[] | undefined>;
+
+	@gate()
+	@debug()
+	async searchMyIssues(): Promise<SearchedIssue[] | undefined> {
+		const scope = getLogScope();
+
+		try {
+			const issues = await this.searchProviderMyIssues(this._session!);
+			this.resetRequestExceptionCount();
+			return issues;
+		} catch (ex) {
+			Logger.error(ex, scope);
+
+			if (ex instanceof AuthenticationError || ex instanceof ProviderRequestClientError) {
+				this.trackRequestException();
+			}
+			return undefined;
+		}
+	}
+	protected abstract searchProviderMyIssues(session: AuthenticationSession): Promise<SearchedIssue[] | undefined>;
 
 	@gate()
 	@debug()
@@ -461,7 +502,7 @@ export abstract class RichRemoteProvider extends RemoteProvider {
 
 			queueMicrotask(() => {
 				this._onDidChange.fire();
-				RichRemoteProviders.connected(this.key);
+				this.container.richRemoteProviders.connected(this.key);
 			});
 		}
 

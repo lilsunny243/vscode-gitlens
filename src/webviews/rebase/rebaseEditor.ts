@@ -8,21 +8,21 @@ import type {
 import { ConfigurationTarget, Disposable, Position, Range, Uri, window, workspace, WorkspaceEdit } from 'vscode';
 import { getNonce } from '@env/crypto';
 import { ShowCommitsInViewCommand } from '../../commands';
-import { configuration } from '../../configuration';
 import { ContextKeys, CoreCommands } from '../../constants';
 import type { Container } from '../../container';
 import { setContext } from '../../context';
 import { emojify } from '../../emojis';
 import type { GitCommit } from '../../git/models/commit';
-import { GitReference } from '../../git/models/reference';
+import { createReference } from '../../git/models/reference';
 import { RepositoryChange, RepositoryChangeComparisonMode } from '../../git/models/repository';
-import { Logger } from '../../logger';
 import { showRebaseSwitchToTextWarningMessage } from '../../messages';
 import { executeCoreCommand } from '../../system/command';
+import { configuration } from '../../system/configuration';
 import { debug, log } from '../../system/decorators/log';
 import type { Deferrable } from '../../system/function';
 import { debounce } from '../../system/function';
 import { join, map } from '../../system/iterable';
+import { Logger } from '../../system/logger';
 import { normalizePath } from '../../system/path';
 import type { IpcMessage, WebviewFocusChangedParams } from '../protocol';
 import { onIpc, WebviewFocusChangedCommandType } from '../protocol';
@@ -514,7 +514,7 @@ export class RebaseEditorProvider implements CustomTextEditorProvider, Disposabl
 		this.container.events.fire(
 			'commit:selected',
 			{
-				commit: GitReference.create(sha, context.repoPath, { refType: 'revision' }),
+				commit: createReference(sha, context.repoPath, { refType: 'revision' }),
 				pin: false,
 				preserveFocus: true,
 				preserveVisibility: context.firstSelection

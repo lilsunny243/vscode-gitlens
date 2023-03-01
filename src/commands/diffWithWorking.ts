@@ -3,10 +3,10 @@ import { window } from 'vscode';
 import { Commands } from '../constants';
 import type { Container } from '../container';
 import { GitUri } from '../git/gitUri';
-import { GitRevision } from '../git/models/reference';
-import { Logger } from '../logger';
+import { deletedOrMissing, uncommittedStaged } from '../git/models/constants';
 import { showGenericErrorMessage } from '../messages';
 import { command, executeCommand } from '../system/command';
+import { Logger } from '../system/logger';
 import { ActiveEditorCommand, getCommandUri } from './base';
 import type { DiffWithCommandArgs } from './diffWith';
 
@@ -64,7 +64,7 @@ export class DiffWithWorkingCommand extends ActiveEditorCommand {
 
 			return;
 		}
-		if (gitUri.sha === GitRevision.deletedOrMissing) {
+		if (gitUri.sha === deletedOrMissing) {
 			void window.showWarningMessage('Unable to open compare. File has been deleted from the working tree');
 
 			return;
@@ -77,7 +77,7 @@ export class DiffWithWorkingCommand extends ActiveEditorCommand {
 				void (await executeCommand<DiffWithCommandArgs>(Commands.DiffWith, {
 					repoPath: gitUri.repoPath,
 					lhs: {
-						sha: GitRevision.uncommittedStaged,
+						sha: uncommittedStaged,
 						uri: gitUri.documentUri(),
 					},
 					rhs: {

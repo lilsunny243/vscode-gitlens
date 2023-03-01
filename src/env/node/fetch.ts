@@ -2,11 +2,11 @@ import * as process from 'process';
 import * as url from 'url';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import fetch from 'node-fetch';
-import { configuration } from '../../configuration';
-import { Logger } from '../../logger';
+import { configuration } from '../../system/configuration';
+import { Logger } from '../../system/logger';
 
 export { fetch };
-export type { BodyInit, RequestInit, Response } from 'node-fetch';
+export type { BodyInit, RequestInfo, RequestInit, Response } from 'node-fetch';
 
 export function getProxyAgent(strictSSL?: boolean): HttpsProxyAgent | undefined {
 	let proxyUrl: string | undefined;

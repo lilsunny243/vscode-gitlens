@@ -1,14 +1,14 @@
 import { Commands, GlyphChars } from '../constants';
 import type { Container } from '../container';
-import { GitRevision } from '../git/models/reference';
+import { createRevisionRange, shortenRevision } from '../git/models/reference';
 import { GitRemote } from '../git/models/remote';
 import type { RemoteResource } from '../git/models/remoteResource';
 import { RemoteResourceType } from '../git/models/remoteResource';
 import type { RemoteProvider } from '../git/remotes/remoteProvider';
-import { Logger } from '../logger';
 import { showGenericErrorMessage } from '../messages';
-import { RemoteProviderPicker } from '../quickpicks/remoteProviderPicker';
+import { showRemoteProviderPicker } from '../quickpicks/remoteProviderPicker';
 import { command } from '../system/command';
+import { Logger } from '../system/logger';
 import { pad, splitSingle } from '../system/string';
 import { Command } from './base';
 
@@ -79,7 +79,7 @@ export class OpenOnRemoteCommand extends Command {
 			const providers = GitRemote.getHighlanderProviders(remotes);
 			const provider = providers?.length ? providers[0].name : 'Remote';
 
-			const options: Parameters<typeof RemoteProviderPicker.show>[4] = {
+			const options: Parameters<typeof showRemoteProviderPicker>[4] = {
 				autoPick: 'default',
 				clipboard: args.clipboard,
 				setDefault: true,
@@ -102,13 +102,13 @@ export class OpenOnRemoteCommand extends Command {
 					break;
 
 				case RemoteResourceType.Commit:
-					title = `${getTitlePrefix('Commit')}${pad(GlyphChars.Dot, 2, 2)}${GitRevision.shorten(
+					title = `${getTitlePrefix('Commit')}${pad(GlyphChars.Dot, 2, 2)}${shortenRevision(
 						args.resource.sha,
 					)}`;
 					break;
 
 				case RemoteResourceType.Comparison:
-					title = `${getTitlePrefix('Comparison')}${pad(GlyphChars.Dot, 2, 2)}${GitRevision.createRange(
+					title = `${getTitlePrefix('Comparison')}${pad(GlyphChars.Dot, 2, 2)}${createRevisionRange(
 						args.resource.base,
 						args.resource.compare,
 						args.resource.notation ?? '...',
@@ -125,7 +125,7 @@ export class OpenOnRemoteCommand extends Command {
 							: `Create Pull Request on ${provider}`
 					}${pad(GlyphChars.Dot, 2, 2)}${
 						args.resource.base?.branch
-							? GitRevision.createRange(args.resource.base.branch, args.resource.compare.branch, '...')
+							? createRevisionRange(args.resource.base.branch, args.resource.compare.branch, '...')
 							: args.resource.compare.branch
 					}`;
 
@@ -143,7 +143,7 @@ export class OpenOnRemoteCommand extends Command {
 					break;
 
 				case RemoteResourceType.Revision: {
-					title = `${getTitlePrefix('File')}${pad(GlyphChars.Dot, 2, 2)}${GitRevision.shorten(
+					title = `${getTitlePrefix('File')}${pad(GlyphChars.Dot, 2, 2)}${shortenRevision(
 						args.resource.sha,
 					)}${pad(GlyphChars.Dot, 1, 1)}${args.resource.fileName}`;
 					break;
@@ -155,7 +155,7 @@ export class OpenOnRemoteCommand extends Command {
 				// }
 			}
 
-			const pick = await RemoteProviderPicker.show(title, placeHolder, args.resource, remotes, options);
+			const pick = await showRemoteProviderPicker(title, placeHolder, args.resource, remotes, options);
 			await pick?.execute();
 		} catch (ex) {
 			Logger.error(ex, 'OpenOnRemoteCommand');

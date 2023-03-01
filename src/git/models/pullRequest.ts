@@ -1,5 +1,5 @@
 import { ColorThemeKind, ThemeColor, ThemeIcon, window } from 'vscode';
-import { DateStyle } from '../../configuration';
+import { DateStyle } from '../../config';
 import { Colors } from '../../constants';
 import { Container } from '../../container';
 import { formatDate, fromNow } from '../../system/date';
@@ -14,14 +14,61 @@ export const enum PullRequestState {
 	Merged = 'Merged',
 }
 
+export const enum PullRequestReviewDecision {
+	Approved = 'Approved',
+	ChangesRequested = 'ChangesRequested',
+	ReviewRequired = 'ReviewRequired',
+}
+
+export const enum PullRequestMergeableState {
+	Unknown = 'Unknown',
+	Mergeable = 'Mergeable',
+	Conflicting = 'Conflicting',
+}
+
+export interface PullRequestRef {
+	owner: string;
+	repo: string;
+	branch: string;
+	sha: string;
+	exists: boolean;
+}
+
+export interface PullRequestRefs {
+	base: PullRequestRef;
+	head: PullRequestRef;
+	isCrossRepository: boolean;
+}
+
+export interface PullRequestMember {
+	name: string;
+	avatarUrl: string;
+	url: string;
+}
+
+export interface PullRequestReviewer {
+	isCodeOwner: boolean;
+	reviewer: PullRequestMember;
+}
+
 export interface PullRequestShape extends IssueOrPullRequest {
-	readonly author: {
-		readonly name: string;
-		readonly avatarUrl: string;
-		readonly url: string;
-	};
+	readonly author: PullRequestMember;
 	readonly state: PullRequestState;
 	readonly mergedDate?: Date;
+	readonly refs?: PullRequestRefs;
+	readonly isDraft?: boolean;
+	readonly additions?: number;
+	readonly deletions?: number;
+	readonly comments?: number;
+	readonly mergeableState?: PullRequestMergeableState;
+	readonly reviewDecision?: PullRequestReviewDecision;
+	readonly reviewRequests?: PullRequestReviewer[];
+	readonly assignees?: PullRequestMember[];
+}
+
+export interface SearchedPullRequest {
+	pullRequest: PullRequest;
+	reasons: string[];
 }
 
 export function serializePullRequest(value: PullRequest): PullRequestShape {
@@ -46,6 +93,33 @@ export function serializePullRequest(value: PullRequest): PullRequestShape {
 		},
 		state: value.state,
 		mergedDate: value.mergedDate,
+		mergeableState: value.mergeableState,
+		refs: value.refs
+			? {
+					head: {
+						exists: value.refs.head.exists,
+						owner: value.refs.head.owner,
+						repo: value.refs.head.repo,
+						sha: value.refs.head.sha,
+						branch: value.refs.head.branch,
+					},
+					base: {
+						exists: value.refs.base.exists,
+						owner: value.refs.base.owner,
+						repo: value.refs.base.repo,
+						sha: value.refs.base.sha,
+						branch: value.refs.base.branch,
+					},
+					isCrossRepository: value.refs.isCrossRepository,
+			  }
+			: undefined,
+		isDraft: value.isDraft,
+		additions: value.additions,
+		deletions: value.deletions,
+		comments: value.comments,
+		reviewDecision: value.reviewDecision,
+		reviewRequests: value.reviewRequests,
+		assignees: value.assignees,
 	};
 	return serialized;
 }
@@ -103,6 +177,15 @@ export class PullRequest implements PullRequestShape {
 		public readonly date: Date,
 		public readonly closedDate?: Date,
 		public readonly mergedDate?: Date,
+		public readonly mergeableState?: PullRequestMergeableState,
+		public readonly refs?: PullRequestRefs,
+		public readonly isDraft?: boolean,
+		public readonly additions?: number,
+		public readonly deletions?: number,
+		public readonly comments?: number,
+		public readonly reviewDecision?: PullRequestReviewDecision,
+		public readonly reviewRequests?: PullRequestReviewer[],
+		public readonly assignees?: PullRequestMember[],
 	) {}
 
 	get closed(): boolean {

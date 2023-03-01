@@ -1,14 +1,14 @@
 import type { TextEditor, Uri } from 'vscode';
 import { env } from 'vscode';
-import { configuration } from '../configuration';
 import { Commands } from '../constants';
 import type { Container } from '../container';
 import { GitUri } from '../git/gitUri';
-import { GitRevision } from '../git/models/reference';
-import { Logger } from '../logger';
+import { shortenRevision } from '../git/models/reference';
 import { showGenericErrorMessage } from '../messages';
 import { command } from '../system/command';
+import { configuration } from '../system/configuration';
 import { first } from '../system/iterable';
+import { Logger } from '../system/logger';
 import type { CommandContext } from './base';
 import {
 	ActiveEditorCommand,
@@ -86,7 +86,7 @@ export class CopyShaToClipboardCommand extends ActiveEditorCommand {
 			}
 
 			await env.clipboard.writeText(
-				configuration.get('advanced.abbreviateShaOnCopy') ? GitRevision.shorten(args.sha) : args.sha,
+				configuration.get('advanced.abbreviateShaOnCopy') ? shortenRevision(args.sha) : args.sha,
 			);
 		} catch (ex) {
 			Logger.error(ex, 'CopyShaToClipboardCommand');

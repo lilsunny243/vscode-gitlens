@@ -2,12 +2,12 @@ import type { TextEditor, Uri } from 'vscode';
 import { Commands } from '../constants';
 import type { Container } from '../container';
 import { GitUri } from '../git/gitUri';
-import { GitRevision } from '../git/models/reference';
+import { deletedOrMissing } from '../git/models/constants';
 import { RemoteResourceType } from '../git/models/remoteResource';
-import { Logger } from '../logger';
 import { showFileNotUnderSourceControlWarningMessage, showGenericErrorMessage } from '../messages';
-import { RepositoryPicker } from '../quickpicks/repositoryPicker';
+import { getBestRepositoryOrShowPicker } from '../quickpicks/repositoryPicker';
 import { command, executeCommand } from '../system/command';
+import { Logger } from '../system/logger';
 import type { CommandContext } from './base';
 import {
 	ActiveEditorCommand,
@@ -63,7 +63,7 @@ export class OpenCommitOnRemoteCommand extends ActiveEditorCommand {
 		let gitUri = uri != null ? await GitUri.fromUri(uri) : undefined;
 
 		const repoPath = (
-			await RepositoryPicker.getBestRepositoryOrShow(
+			await getBestRepositoryOrShowPicker(
 				gitUri,
 				editor,
 				args?.clipboard ? 'Copy Remote Commit URL' : 'Open Commit On Remote',
@@ -91,7 +91,7 @@ export class OpenCommitOnRemoteCommand extends ActiveEditorCommand {
 
 				// If the line is uncommitted, use previous commit
 				args.sha = blame.commit.isUncommitted
-					? (await blame.commit.getPreviousSha()) ?? GitRevision.deletedOrMissing
+					? (await blame.commit.getPreviousSha()) ?? deletedOrMissing
 					: blame.commit.sha;
 			}
 

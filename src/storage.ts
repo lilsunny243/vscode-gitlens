@@ -4,7 +4,7 @@ import type { ViewShowBranchComparison } from './config';
 import type { StoredSearchQuery } from './git/search';
 import type { Subscription } from './subscription';
 import { debug } from './system/decorators/log';
-import type { TrackedUsage, TrackedUsageKeys } from './usageTracker';
+import type { TrackedUsage, TrackedUsageKeys } from './telemetry/usageTracker';
 import type { CompletedActions } from './webviews/home/protocol';
 
 export type StorageChangeEvent =
@@ -129,6 +129,7 @@ export type GlobalStorage = {
 	pendingWhatsNewOnFocus: boolean;
 	'plus:migratedAuthentication': boolean;
 	'plus:discountNotificationShown': boolean;
+	'plus:renewalDiscountNotificationShown': boolean;
 	// Don't change this key name ('premium`) as its the stored subscription
 	'premium:subscription': Stored<Subscription>;
 	'synced:version': string;

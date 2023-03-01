@@ -18,9 +18,10 @@ import { findOrOpenEditor, findOrOpenEditors } from '../../system/utils';
 import { GitUri } from '../gitUri';
 import type { GitCommit } from '../models/commit';
 import { isCommit } from '../models/commit';
+import { deletedOrMissing } from '../models/constants';
 import type { GitFile } from '../models/file';
 import type { GitRevisionReference } from '../models/reference';
-import { GitReference, GitRevision } from '../models/reference';
+import { getReferenceFromRevision, isUncommitted, isUncommittedStaged } from '../models/reference';
 
 export async function applyChanges(file: string | GitFile, ref1: GitRevisionReference, ref2?: GitRevisionReference) {
 	// Open the working file to ensure undo will work
@@ -202,8 +203,10 @@ export async function openChanges(
 	commitOrRefs: GitCommit | { repoPath: string; ref1: string; ref2: string },
 	options?: TextDocumentShowOptions,
 ) {
+	const isArgCommit = isCommit(commitOrRefs);
+
 	if (typeof file === 'string') {
-		if (!isCommit(commitOrRefs)) throw new Error('Invalid arguments');
+		if (!isArgCommit) throw new Error('Invalid arguments');
 
 		const f = await commitOrRefs.findFile(file);
 		if (f == null) throw new Error('Invalid arguments');
@@ -213,17 +216,17 @@ export async function openChanges(
 
 	options = { preserveFocus: true, preview: false, ...options };
 
-	if (file.status === 'A') {
-		if (!isCommit(commitOrRefs)) return;
-
+	if (file.status === 'A' && isArgCommit) {
 		const commit = await commitOrRefs.getCommitForFile(file);
 		void executeCommand<DiffWithPreviousCommandArgs>(Commands.DiffWithPrevious, {
 			commit: commit,
 			showOptions: options,
 		});
+
+		return;
 	}
 
-	const refs = isCommit(commitOrRefs)
+	const refs = isArgCommit
 		? {
 				repoPath: commitOrRefs.repoPath,
 				// Don't need to worry about verifying the previous sha, as the DiffWith command will
@@ -268,9 +271,9 @@ export async function openChangesWithDiffTool(
 		commitOrRef.repoPath,
 		GitUri.fromFile(file, file.repoPath ?? commitOrRef.repoPath),
 		{
-			ref1: GitRevision.isUncommitted(commitOrRef.ref) ? '' : `${commitOrRef.ref}^`,
-			ref2: GitRevision.isUncommitted(commitOrRef.ref) ? '' : commitOrRef.ref,
-			staged: GitRevision.isUncommittedStaged(commitOrRef.ref) || file.indexStatus != null,
+			ref1: isUncommitted(commitOrRef.ref) ? '' : `${commitOrRef.ref}^`,
+			ref2: isUncommitted(commitOrRef.ref) ? '' : commitOrRef.ref,
+			staged: isUncommittedStaged(commitOrRef.ref) || file.indexStatus != null,
 			tool: tool,
 		},
 	);
@@ -408,7 +411,7 @@ export async function openFileAtRevision(
 		}
 
 		uri = Container.instance.git.getRevisionUri(
-			file.status === 'D' ? (await commit.getPreviousSha()) ?? GitRevision.deletedOrMissing : commit.sha,
+			file.status === 'D' ? (await commit.getPreviousSha()) ?? deletedOrMissing : commit.sha,
 			file,
 			commit.repoPath,
 		);
@@ -594,7 +597,7 @@ export async function showInCommitGraph(
 	options?: { preserveFocus?: boolean },
 ): Promise<void> {
 	void (await executeCommand<ShowInCommitGraphCommandArgs>(Commands.ShowInCommitGraph, {
-		ref: GitReference.fromRevision(commit),
+		ref: getReferenceFromRevision(commit),
 		preserveFocus: options?.preserveFocus,
 	}));
 }

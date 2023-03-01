@@ -5,8 +5,8 @@ import type {
 	TreeViewVisibilityChangeEvent,
 } from 'vscode';
 import { Disposable, ProgressLocation, ThemeIcon, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
-import type { CommitsViewConfig } from '../configuration';
-import { configuration, ViewFilesLayout, ViewShowBranchComparison } from '../configuration';
+import type { CommitsViewConfig } from '../config';
+import { ViewFilesLayout, ViewShowBranchComparison } from '../config';
 import { Commands, ContextKeys, GlyphChars } from '../constants';
 import type { Container } from '../container';
 import { setContext } from '../context';
@@ -14,14 +14,15 @@ import { GitUri } from '../git/gitUri';
 import type { GitCommit } from '../git/models/commit';
 import { isCommit } from '../git/models/commit';
 import type { GitRevisionReference } from '../git/models/reference';
-import { GitReference } from '../git/models/reference';
+import { getReferenceLabel } from '../git/models/reference';
 import type { RepositoryChangeEvent } from '../git/models/repository';
 import { Repository, RepositoryChange, RepositoryChangeComparisonMode } from '../git/models/repository';
 import { executeCommand } from '../system/command';
+import { configuration } from '../system/configuration';
 import { gate } from '../system/decorators/gate';
 import { debug } from '../system/decorators/log';
 import { disposableInterval } from '../system/function';
-import type { UsageChangeEvent } from '../usageTracker';
+import type { UsageChangeEvent } from '../telemetry/usageTracker';
 import { BranchNode } from './nodes/branchNode';
 import { BranchTrackingStatusNode } from './nodes/branchTrackingStatusNode';
 import { CommitFileNode } from './nodes/commitFileNode';
@@ -400,7 +401,10 @@ export class CommitsView extends ViewBase<CommitsViewNode, CommitsViewConfig> {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,
-				title: `Revealing ${GitReference.toString(commit, { icon: false, quoted: true })} in the side bar...`,
+				title: `Revealing ${getReferenceLabel(commit, {
+					icon: false,
+					quoted: true,
+				})} in the side bar...`,
 				cancellable: true,
 			},
 			async (progress, token) => {

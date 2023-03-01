@@ -13,9 +13,9 @@ import { encodeUrl } from '../../system/encoding';
 import { equalsIgnoreCase } from '../../system/string';
 import type { Account } from '../models/author';
 import type { DefaultBranch } from '../models/defaultBranch';
-import type { IssueOrPullRequest } from '../models/issue';
-import type { PullRequest, PullRequestState } from '../models/pullRequest';
-import { GitRevision } from '../models/reference';
+import type { IssueOrPullRequest, SearchedIssue } from '../models/issue';
+import type { PullRequest, PullRequestState, SearchedPullRequest } from '../models/pullRequest';
+import { isSha } from '../models/reference';
 import type { Repository } from '../models/repository';
 import { ensurePaidPlan, RichRemoteProvider } from './richRemoteProvider';
 
@@ -223,7 +223,7 @@ export class GitLabRemote extends RichRemoteProvider {
 		let index = path.indexOf('/', 1);
 		if (index !== -1) {
 			const sha = path.substring(1, index);
-			if (GitRevision.isSha(sha)) {
+			if (isSha(sha)) {
 				const uri = repository.toAbsoluteUri(path.substr(index), { validate: options?.validate });
 				if (uri != null) return { uri: uri, startLine: startLine, endLine: endLine };
 			}
@@ -347,11 +347,11 @@ export class GitLabRemote extends RichRemoteProvider {
 		const [owner, repo] = this.splitPath();
 		const { include, ...opts } = options ?? {};
 
-		const GitLabMergeRequest = (await import(/* webpackChunkName: "gitlab" */ '../../plus/gitlab/models'))
-			.GitLabMergeRequest;
+		const toGitLabMergeRequestState = (await import(/* webpackChunkName: "gitlab" */ '../../plus/gitlab/models'))
+			.toGitLabMergeRequestState;
 		return (await this.container.gitlab)?.getPullRequestForBranch(this, accessToken, owner, repo, branch, {
 			...opts,
-			include: include?.map(s => GitLabMergeRequest.toState(s)),
+			include: include?.map(s => toGitLabMergeRequestState(s)),
 			baseUrl: this.apiBaseUrl,
 		});
 	}
@@ -364,6 +364,16 @@ export class GitLabRemote extends RichRemoteProvider {
 		return (await this.container.gitlab)?.getPullRequestForCommit(this, accessToken, owner, repo, ref, {
 			baseUrl: this.apiBaseUrl,
 		});
+	}
+
+	protected async searchProviderMyPullRequests(
+		_session: AuthenticationSession,
+	): Promise<SearchedPullRequest[] | undefined> {
+		return Promise.resolve(undefined);
+	}
+
+	protected async searchProviderMyIssues(_session: AuthenticationSession): Promise<SearchedIssue[] | undefined> {
+		return Promise.resolve(undefined);
 	}
 }
 

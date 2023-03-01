@@ -4,10 +4,10 @@ import { Commands } from '../constants';
 import type { Container } from '../container';
 import { GitUri } from '../git/gitUri';
 import type { GitCommit } from '../git/models/commit';
-import { GitRevision } from '../git/models/reference';
-import { Logger } from '../logger';
+import { uncommittedStaged } from '../git/models/constants';
 import { showFileNotUnderSourceControlWarningMessage, showGenericErrorMessage } from '../messages';
 import { command, executeCommand } from '../system/command';
+import { Logger } from '../system/logger';
 import { ActiveEditorCommand, getCommandUri } from './base';
 import type { DiffWithCommandArgs } from './diffWith';
 
@@ -56,7 +56,7 @@ export class DiffLineWithWorkingCommand extends ActiveEditorCommand {
 				if (args.commit.isUncommitted) {
 					const status = await this.container.git.getStatusForFile(gitUri.repoPath!, gitUri);
 					if (status?.indexStatus != null) {
-						lhsSha = GitRevision.uncommittedStaged;
+						lhsSha = uncommittedStaged;
 						lhsUri = this.container.git.getAbsoluteUri(
 							status.originalPath || status.path,
 							args.commit.repoPath,

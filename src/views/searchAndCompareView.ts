@@ -1,20 +1,21 @@
 import type { ConfigurationChangeEvent, Disposable } from 'vscode';
 import { TreeItem, TreeItemCollapsibleState } from 'vscode';
-import type { SearchAndCompareViewConfig } from '../configuration';
-import { configuration, ViewFilesLayout } from '../configuration';
+import type { SearchAndCompareViewConfig } from '../config';
+import { ViewFilesLayout } from '../config';
 import { Commands, ContextKeys } from '../constants';
 import type { Container } from '../container';
 import { setContext } from '../context';
 import { unknownGitUri } from '../git/gitUri';
 import type { GitLog } from '../git/models/log';
-import { GitRevision } from '../git/models/reference';
+import { isRevisionRange, shortenRevision, splitRevisionRange } from '../git/models/reference';
 import type { SearchQuery } from '../git/search';
 import { getSearchQuery } from '../git/search';
-import { ReferencePicker, ReferencesQuickPickIncludes } from '../quickpicks/referencePicker';
-import { RepositoryPicker } from '../quickpicks/repositoryPicker';
+import { ReferencesQuickPickIncludes, showReferencePicker } from '../quickpicks/referencePicker';
+import { getRepositoryOrShowPicker } from '../quickpicks/repositoryPicker';
 import type { StoredNamedRef, StoredPinnedItem, StoredPinnedItems } from '../storage';
 import { filterMap } from '../system/array';
 import { executeCommand } from '../system/command';
+import { configuration } from '../system/configuration';
 import { gate } from '../system/decorators/gate';
 import { debug, log } from '../system/decorators/log';
 import { updateRecordValue } from '../system/object';
@@ -139,7 +140,7 @@ export class SearchAndCompareViewNode extends ViewNode<SearchAndCompareView> {
 		}
 
 		if (ref == null) {
-			const pick = await ReferencePicker.show(
+			const pick = await showReferencePicker(
 				repoPath,
 				`Compare ${this.getRefName(selectedRef.ref)} with`,
 				'Choose a reference to compare with',
@@ -169,7 +170,7 @@ export class SearchAndCompareViewNode extends ViewNode<SearchAndCompareView> {
 
 	async selectForCompare(repoPath?: string, ref?: string | StoredNamedRef, options?: { prompt?: boolean }) {
 		if (repoPath == null) {
-			repoPath = (await RepositoryPicker.getRepositoryOrShow('Compare'))?.path;
+			repoPath = (await getRepositoryOrShowPicker('Compare'))?.path;
 		}
 		if (repoPath == null) return;
 
@@ -178,7 +179,7 @@ export class SearchAndCompareViewNode extends ViewNode<SearchAndCompareView> {
 		let prompt = options?.prompt ?? false;
 		let ref2;
 		if (ref == null) {
-			const pick = await ReferencePicker.show(repoPath, 'Compare', 'Choose a reference to compare', {
+			const pick = await showReferencePicker(repoPath, 'Compare', 'Choose a reference to compare', {
 				allowEnteringRefs: { ranges: true },
 				// checkmarks: false,
 				include:
@@ -195,8 +196,8 @@ export class SearchAndCompareViewNode extends ViewNode<SearchAndCompareView> {
 
 			ref = pick.ref;
 
-			if (GitRevision.isRange(ref)) {
-				const range = GitRevision.splitRange(ref);
+			if (isRevisionRange(ref)) {
+				const range = splitRevisionRange(ref);
 				if (range != null) {
 					ref = range.ref1 || 'HEAD';
 					ref2 = range.ref2 || 'HEAD';
@@ -225,8 +226,8 @@ export class SearchAndCompareViewNode extends ViewNode<SearchAndCompareView> {
 
 	private getRefName(ref: string | StoredNamedRef): string {
 		return typeof ref === 'string'
-			? GitRevision.shorten(ref, { strings: { working: 'Working Tree' } })!
-			: ref.label ?? GitRevision.shorten(ref.ref)!;
+			? shortenRevision(ref, { strings: { working: 'Working Tree' } })!
+			: ref.label ?? shortenRevision(ref.ref)!;
 	}
 
 	private removeComparePicker(silent: boolean = false) {
