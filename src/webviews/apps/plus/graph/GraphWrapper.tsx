@@ -16,7 +16,7 @@ import { VSCodeCheckbox, VSCodeRadio, VSCodeRadioGroup } from '@vscode/webview-u
 import type { FormEvent, ReactElement } from 'react';
 import React, { createElement, useEffect, useMemo, useRef, useState } from 'react';
 import { getPlatform } from '@env/platform';
-import { DateStyle } from '../../../../config';
+import type { DateStyle } from '../../../../config';
 import type { SearchQuery } from '../../../../git/search';
 import type {
 	DidEnsureRowParams,
@@ -55,6 +55,7 @@ import {
 } from '../../../../plus/webviews/graph/protocol';
 import type { Subscription } from '../../../../subscription';
 import { pluralize } from '../../../../system/string';
+import { createWebviewCommandLink } from '../../../../system/webview';
 import type { IpcNotificationType } from '../../../protocol';
 import { MenuDivider, MenuItem, MenuLabel, MenuList } from '../../shared/components/menu/react';
 import { PopMenu } from '../../shared/components/overlays/pop-menu/react';
@@ -697,20 +698,14 @@ export function GraphWrapper({
 	}, [includeOnlyRefsById]);
 
 	const hasFilters = useMemo(() => {
-		if (!isAllBranches) {
-			return true;
-		}
-
-		if (graphConfig?.dimMergeCommits) {
-			return true;
-		}
-
-		if (excludeTypes == null) {
-			return false;
-		}
-
+		if (!isAllBranches) return true;
+		if (excludeTypes == null) return false;
 		return Object.values(excludeTypes).includes(true);
 	}, [excludeTypes, isAllBranches, graphConfig?.dimMergeCommits]);
+
+	const hasSpecialFilters = useMemo(() => {
+		return !isAllBranches;
+	}, [isAllBranches]);
 
 	const handleSearchInput = (e: CustomEvent<SearchQuery>) => {
 		const detail = e.detail;
@@ -978,9 +973,10 @@ export function GraphWrapper({
 		const lastFetchedDate = lastFetched && new Date(lastFetched);
 		const fetchedText = lastFetchedDate && lastFetchedDate.getTime() !== 0 ? fromNow(lastFetchedDate) : undefined;
 
+		let action: 'fetch' | 'pull' | 'push' = 'fetch';
+
 		let icon = 'sync';
 		let label = 'Fetch';
-		let action = 'command:gitlens.graph.fetch';
 		let isBehind = false;
 		let isAhead = false;
 
@@ -993,12 +989,12 @@ export function GraphWrapper({
 			const branchPrefix = `Branch ${branchName} is`;
 			remote = `${branchState.upstream}${branchState.provider?.name ? ` on ${branchState.provider?.name}` : ''}`;
 			if (isBehind) {
-				action = 'command:gitlens.graph.pull';
+				action = 'pull';
 				icon = 'arrow-down';
 				label = 'Pull';
 				tooltip = `Pull from ${remote}\n${branchPrefix} ${pluralize('commit', branchState.behind)} behind of`;
 			} else if (isAhead) {
-				action = 'command:gitlens.graph.push';
+				action = 'push';
 				icon = 'arrow-up';
 				label = 'Push';
 				tooltip = `Push to ${remote}\n${branchPrefix} ${pluralize('commit', branchState.ahead)} ahead of`;
@@ -1017,7 +1013,7 @@ export function GraphWrapper({
 			<div className="titlebar__group">
 				{(isBehind || isAhead) && (
 					<a
-						href={action}
+						href={createWebviewCommandLink(`gitlens.graph.${action}`, state.webviewId)}
 						className={`action-button${isBehind ? ' is-behind' : ''}${isAhead ? ' is-ahead' : ''}`}
 						title={tooltip}
 					>
@@ -1041,7 +1037,11 @@ export function GraphWrapper({
 						)}
 					</a>
 				)}
-				<a href="command:gitlens.graph.fetch" className="action-button" title={fetchTooltip}>
+				<a
+					href={createWebviewCommandLink('gitlens.graph.fetch', state.webviewId)}
+					className="action-button"
+					title={fetchTooltip}
+				>
 					<span className="codicon codicon-sync action-button__icon"></span>
 					Fetch
 					{fetchedText && <span className="action-button__small">({fetchedText})</span>}
@@ -1099,7 +1099,7 @@ export function GraphWrapper({
 								<span className="codicon codicon-chevron-right"></span>
 							</span>
 							<a
-								href="command:gitlens.graph.switchToAnotherBranch"
+								href={createWebviewCommandLink('gitlens.graph.switchToAnotherBranch', state.webviewId)}
 								className="action-button"
 								title="Switch to Another Branch..."
 								aria-label="Switch to Another Branch..."
@@ -1133,7 +1133,7 @@ export function GraphWrapper({
 							<PopMenu>
 								<button type="button" className="action-button" slot="trigger" title="Filter Graph">
 									<span className={`codicon codicon-filter${hasFilters ? '-filled' : ''}`}></span>
-									{hasFilters && <span className="action-button__indicator"></span>}
+									{hasSpecialFilters && <span className="action-button__indicator"></span>}
 									<span
 										className="codicon codicon-chevron-down action-button__more"
 										aria-hidden="true"
@@ -1430,7 +1430,7 @@ export function GraphWrapper({
 
 function formatCommitDateTime(
 	date: number,
-	style: DateStyle = DateStyle.Absolute,
+	style: DateStyle = 'absolute',
 	format: DateTimeFormat | string = 'short+short',
 	source?: CommitDateTimeSources,
 ): string {
@@ -1439,7 +1439,7 @@ function formatCommitDateTime(
 			return `${formatDate(date, format)} (${fromNow(date)})`;
 		case CommitDateTimeSources.RowEntry:
 		default:
-			return style === DateStyle.Relative ? fromNow(date) : formatDate(date, format);
+			return style === 'relative' ? fromNow(date) : formatDate(date, format);
 	}
 }
 

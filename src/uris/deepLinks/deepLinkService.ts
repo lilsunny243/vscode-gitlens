@@ -5,7 +5,6 @@ import type { Container } from '../../container';
 import { getBranchNameWithoutRemote } from '../../git/models/branch';
 import type { GitReference } from '../../git/models/reference';
 import { createReference, isSha } from '../../git/models/reference';
-import type { GitRemote } from '../../git/models/remote';
 import { parseGitRemoteUrl } from '../../git/parsers/remoteParser';
 import type { ShowInCommitGraphCommandArgs } from '../../plus/webviews/graph/protocol';
 import { executeCommand } from '../../system/command';
@@ -13,17 +12,16 @@ import { configuration } from '../../system/configuration';
 import { once } from '../../system/event';
 import { Logger } from '../../system/logger';
 import { normalizePath } from '../../system/path';
-import { openWorkspace, OpenWorkspaceLocation } from '../../system/utils';
-import type { DeepLink, DeepLinkProgress, DeepLinkServiceContext } from './deepLink';
+import type { OpenWorkspaceLocation } from '../../system/utils';
+import { openWorkspace } from '../../system/utils';
+import type { DeepLink, DeepLinkProgress, DeepLinkRepoOpenType, DeepLinkServiceContext, UriTypes } from './deepLink';
 import {
-	DeepLinkRepoOpenType,
 	DeepLinkServiceAction,
 	DeepLinkServiceState,
 	deepLinkStateToProgress,
 	deepLinkStateTransitionTable,
 	DeepLinkType,
 	parseDeepLinkUri,
-	UriTypes,
 } from './deepLink';
 
 export class DeepLinkService implements Disposable {
@@ -44,6 +42,10 @@ export class DeepLinkService implements Disposable {
 				if (link == null) return;
 
 				if (this._context.state === DeepLinkServiceState.Idle) {
+					if (this.container.git.isDiscoveringRepositories) {
+						await this.container.git.isDiscoveringRepositories;
+					}
+
 					if (!link.type || (!link.repoId && !link.remoteUrl && !link.repoPath)) {
 						void window.showErrorMessage('Unable to resolve link');
 						Logger.warn(`Unable to resolve link - missing basic properties: ${uri.toString()}`);
@@ -94,9 +96,11 @@ export class DeepLinkService implements Disposable {
 			repo: undefined,
 			remoteUrl: undefined,
 			remote: undefined,
+			secondaryRemote: undefined,
 			repoPath: undefined,
 			targetId: undefined,
 			secondaryTargetId: undefined,
+			secondaryRemoteUrl: undefined,
 			targetType: undefined,
 			targetSha: undefined,
 		};
@@ -112,6 +116,7 @@ export class DeepLinkService implements Disposable {
 			repoPath: link.repoPath,
 			targetId: link.targetId,
 			secondaryTargetId: link.secondaryTargetId,
+			secondaryRemoteUrl: link.secondaryRemoteUrl,
 		};
 	}
 
@@ -125,6 +130,10 @@ export class DeepLinkService implements Disposable {
 		this.setContextFromDeepLink(link, pendingDeepLink.url);
 
 		let action = DeepLinkServiceAction.OpenRepo;
+
+		if (this.container.git.isDiscoveringRepositories) {
+			await this.container.git.isDiscoveringRepositories;
+		}
 
 		if (pendingDeepLink.repoPath != null) {
 			const repoOpenUri = Uri.parse(pendingDeepLink.repoPath);
@@ -143,17 +152,44 @@ export class DeepLinkService implements Disposable {
 	}
 
 	private async getShaForBranch(targetId: string): Promise<string | undefined> {
-		const { repo, remote } = this._context;
+		const { repo, remote, secondaryRemote } = this._context;
 		if (!repo) return undefined;
 
-		// Form the target branch name using the remote name and branch name
-		const branchName = remote != null ? `${remote.name}/${targetId}` : targetId;
+		let branchName: string = targetId;
+
+		// If the branch name doesn't start with a remote name, first try using the primary and secondary remotes
+		if (remote != null && !branchName.startsWith(`${remote.name}/`)) {
+			branchName = `${remote.name}/${branchName}`;
+		} else if (secondaryRemote != null && !branchName.startsWith(`${secondaryRemote.name}/`)) {
+			branchName = `${secondaryRemote.name}/${branchName}`;
+		}
+
 		let branch = await repo.getBranch(branchName);
 		if (branch?.sha != null) {
 			return branch.sha;
 		}
 
-		// If it doesn't exist on the target remote, it may still exist locally.
+		// If that fails, try matching to any existing remote using its path.
+		if (targetId.includes(':')) {
+			const [providerRepoInfo, branchBaseName] = targetId.split(':');
+			if (providerRepoInfo != null && branchName != null) {
+				const [owner, repoName] = providerRepoInfo.split('/');
+				if (owner != null && repoName != null) {
+					const remotes = await repo.getRemotes();
+					for (const remote of remotes) {
+						if (remote.provider?.owner === owner) {
+							branchName = `${remote.name}/${branchBaseName}`;
+							branch = await repo.getBranch(branchName);
+							if (branch?.sha != null) {
+								return branch.sha;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// If the above don't work, it may still exist locally.
 		branch = await repo.getBranch(targetId);
 		if (branch?.sha != null) {
 			return branch.sha;
@@ -183,36 +219,35 @@ export class DeepLinkService implements Disposable {
 		return undefined;
 	}
 
-	private async getRefsForComparison(
+	private async getShasForComparison(
 		targetId: string,
 		secondaryTargetId: string,
 	): Promise<[string, string] | undefined> {
-		const ref1 = (await this.validateComparisonRef(targetId)) ? targetId : undefined;
-		if (ref1 == null) return undefined;
-		const ref2 = (await this.validateComparisonRef(secondaryTargetId)) ? secondaryTargetId : undefined;
-		if (ref2 == null) return undefined;
-		return [ref1, ref2];
+		const sha1 = await this.getComparisonRefSha(targetId);
+		if (sha1 == null) return undefined;
+		const sha2 = await this.getComparisonRefSha(secondaryTargetId);
+		if (sha2 == null) return undefined;
+		return [sha1, sha2];
 	}
 
-	private async validateComparisonRef(ref: string) {
+	private async getComparisonRefSha(ref: string) {
 		// try treating each id as a commit sha first, then a branch if that fails, then a tag if that fails.
 		// Note: a blank target id will be treated as 'Working Tree' and will resolve to a blank Sha.
 
-		if (ref === '') return true;
+		if (ref === '') return ref;
 
-		if (isSha(ref)) return (await this.getShaForCommit(ref)) != null;
+		if (isSha(ref)) return this.getShaForCommit(ref);
 
 		const normalized = ref.toLocaleLowerCase();
 		if (!normalized.startsWith('refs/tags/') && !normalized.startsWith('tags/')) {
-			const branch = await this.getShaForBranch(ref);
-			if (branch != null) return true;
+			const branchSha = await this.getShaForBranch(ref);
+			if (branchSha != null) return branchSha;
 		}
 
-		const tag = await this.getShaForTag(ref);
-		if (tag != null) return true;
+		const tagSha = await this.getShaForTag(ref);
+		if (tagSha != null) return tagSha;
 
-		const sha = await this.getShaForCommit(ref);
-		return sha != null;
+		return this.getShaForCommit(ref);
 	}
 
 	private async getShasForTargets(): Promise<string | string[] | undefined> {
@@ -232,48 +267,53 @@ export class DeepLinkService implements Disposable {
 
 		if (targetType === DeepLinkType.Comparison) {
 			if (secondaryTargetId == null) return undefined;
-			return this.getRefsForComparison(targetId, secondaryTargetId);
+			return this.getShasForComparison(targetId, secondaryTargetId);
 		}
 
 		return undefined;
 	}
 
-	private async showOpenTypePrompt(): Promise<DeepLinkRepoOpenType | undefined> {
-		const options: { title: string; action?: DeepLinkRepoOpenType; isCloseAffordance?: boolean }[] = [
-			{ title: 'Open Folder', action: DeepLinkRepoOpenType.Folder },
-			{ title: 'Open Workspace', action: DeepLinkRepoOpenType.Workspace },
+	private async showOpenTypePrompt(options?: {
+		includeCurrent?: boolean;
+		customMessage?: string;
+	}): Promise<DeepLinkRepoOpenType | undefined> {
+		const openOptions: { title: string; action?: DeepLinkRepoOpenType; isCloseAffordance?: boolean }[] = [
+			{ title: 'Open Folder', action: 'folder' },
+			{ title: 'Open Workspace', action: 'workspace' },
 		];
 
 		if (this._context.remoteUrl != null) {
-			options.push({ title: 'Clone', action: DeepLinkRepoOpenType.Clone });
+			openOptions.push({ title: 'Clone', action: 'clone' });
 		}
 
-		options.push({ title: 'Cancel', isCloseAffordance: true });
+		if (options?.includeCurrent) {
+			openOptions.push({ title: 'Use Current Window', action: 'current' });
+		}
+
+		openOptions.push({ title: 'Cancel', isCloseAffordance: true });
 		const openTypeResult = await window.showInformationMessage(
-			'No matching repository found. Please choose an option.',
+			options?.customMessage ?? 'No matching repository found. Please choose an option.',
 			{ modal: true },
-			...options,
+			...openOptions,
 		);
 
 		return openTypeResult?.action;
 	}
 
 	private async showOpenLocationPrompt(openType: DeepLinkRepoOpenType): Promise<OpenWorkspaceLocation | undefined> {
-		// Only add the "add to workspace" option if openType is DeepLinkRepoOpenType.Folder
+		// Only add the "add to workspace" option if openType is 'folder'
 		const openOptions: { title: string; action?: OpenWorkspaceLocation; isCloseAffordance?: boolean }[] = [
-			{ title: 'Open', action: OpenWorkspaceLocation.CurrentWindow },
-			{ title: 'Open in New Window', action: OpenWorkspaceLocation.NewWindow },
+			{ title: 'Open', action: 'currentWindow' },
+			{ title: 'Open in New Window', action: 'newWindow' },
 		];
 
-		if (openType !== DeepLinkRepoOpenType.Workspace) {
-			openOptions.push({ title: 'Add to Workspace', action: OpenWorkspaceLocation.AddToWorkspace });
+		if (openType !== 'workspace') {
+			openOptions.push({ title: 'Add to Workspace', action: 'addToWorkspace' });
 		}
 
 		openOptions.push({ title: 'Cancel', isCloseAffordance: true });
 		const openLocationResult = await window.showInformationMessage(
-			`Please choose an option to open the repository ${
-				openType === DeepLinkRepoOpenType.Clone ? 'after cloning' : openType
-			}.`,
+			`Please choose an option to open the repository ${openType === 'clone' ? 'after cloning' : openType}.`,
 			{ modal: true },
 			...openOptions,
 		);
@@ -320,17 +360,8 @@ export class DeepLinkService implements Disposable {
 		let message = '';
 		let action = initialAction;
 
-		// Remote match
-		let matchingRemotes: GitRemote[] = [];
-		let remoteDomain = '';
-		let remotePath = '';
-		let remoteName = undefined;
-
-		// Repo open/clone
-		let repoOpenType;
-		let repoOpenLocation;
-		let repoOpenUri: Uri | undefined = undefined;
-		let repoClonePath: string | undefined = undefined;
+		//Repo match
+		let matchingLocalRepoPaths: string[] = [];
 
 		queueMicrotask(
 			() =>
@@ -363,11 +394,25 @@ export class DeepLinkService implements Disposable {
 
 		while (true) {
 			this._context.state = deepLinkStateTransitionTable[this._context.state][action];
-			const { state, repoId, repo, url, remoteUrl, remote, repoPath, targetSha, secondaryTargetSha, targetType } =
-				this._context;
+			const {
+				state,
+				repoId,
+				repo,
+				url,
+				remoteUrl,
+				secondaryRemoteUrl,
+				remote,
+				secondaryRemote,
+				repoPath,
+				targetId,
+				secondaryTargetId,
+				targetSha,
+				secondaryTargetSha,
+				targetType,
+			} = this._context;
 			this._onDeepLinkProgressUpdated.fire(deepLinkStateToProgress[state]);
 			switch (state) {
-				case DeepLinkServiceState.Idle:
+				case DeepLinkServiceState.Idle: {
 					if (action === DeepLinkServiceAction.DeepLinkErrored) {
 						void window.showErrorMessage('Unable to resolve link');
 						Logger.warn(`Unable to resolve link - ${message}: ${url}`);
@@ -376,14 +421,17 @@ export class DeepLinkService implements Disposable {
 					// Deep link processing complete. Reset the context and return.
 					this.resetContext();
 					return;
+				}
 				case DeepLinkServiceState.RepoMatch:
-				case DeepLinkServiceState.AddedRepoMatch:
+				case DeepLinkServiceState.AddedRepoMatch: {
 					if (!repoId && !remoteUrl && !repoPath) {
 						action = DeepLinkServiceAction.DeepLinkErrored;
 						message = 'No repository id, remote url or path was provided.';
 						break;
 					}
 
+					let remoteDomain = '';
+					let remotePath = '';
 					if (remoteUrl != null) {
 						[, remoteDomain, remotePath] = parseGitRemoteUrl(remoteUrl);
 					}
@@ -395,19 +443,18 @@ export class DeepLinkService implements Disposable {
 							normalizePath(repo.path.toLowerCase()) === normalizePath(repoPath.toLowerCase())
 						) {
 							this._context.repo = repo;
-							action = DeepLinkServiceAction.RepoMatchedWithPath;
+							action = DeepLinkServiceAction.RepoMatched;
 							break;
 						}
 
 						if (remoteDomain != null && remotePath != null) {
-							matchingRemotes = await repo.getRemotes({
-								// eslint-disable-next-line no-loop-func
+							const matchingRemotes = await repo.getRemotes({
 								filter: r => r.matches(remoteDomain, remotePath),
 							});
 							if (matchingRemotes.length > 0) {
 								this._context.repo = repo;
 								this._context.remote = matchingRemotes[0];
-								action = DeepLinkServiceAction.RepoMatchedWithRemoteUrl;
+								action = DeepLinkServiceAction.RepoMatched;
 								break;
 							}
 						}
@@ -417,7 +464,31 @@ export class DeepLinkService implements Disposable {
 							// first commit SHA.
 							if (await this.container.git.validateReference(repo.path, repoId)) {
 								this._context.repo = repo;
-								action = DeepLinkServiceAction.RepoMatchedWithId;
+								action = DeepLinkServiceAction.RepoMatched;
+								break;
+							}
+						}
+					}
+
+					if (!this._context.repo && state === DeepLinkServiceState.RepoMatch) {
+						matchingLocalRepoPaths = await this.container.repositoryPathMapping.getLocalRepoPaths({
+							remoteUrl: remoteUrl,
+						});
+						if (matchingLocalRepoPaths.length > 0) {
+							for (const repo of this.container.git.repositories) {
+								if (
+									matchingLocalRepoPaths.some(
+										p => normalizePath(repo.path.toLowerCase()) === normalizePath(p.toLowerCase()),
+									)
+								) {
+									this._context.repo = repo;
+									action = DeepLinkServiceAction.RepoMatched;
+									break;
+								}
+							}
+
+							if (this._context.repo == null) {
+								action = DeepLinkServiceAction.RepoMatchedInLocalMapping;
 								break;
 							}
 						}
@@ -433,58 +504,84 @@ export class DeepLinkService implements Disposable {
 					}
 
 					break;
-
-				case DeepLinkServiceState.CloneOrAddRepo:
+				}
+				case DeepLinkServiceState.CloneOrAddRepo: {
 					if (!repoId && !remoteUrl && !repoPath) {
 						action = DeepLinkServiceAction.DeepLinkErrored;
 						message = 'Missing repository id, remote url and path.';
 						break;
 					}
 
-					repoOpenType = await this.showOpenTypePrompt();
+					let chosenRepoPath: string | undefined;
+					let repoOpenType: DeepLinkRepoOpenType | undefined;
+					let repoOpenUri: Uri | undefined;
+
+					if (matchingLocalRepoPaths.length > 0) {
+						chosenRepoPath = await window.showQuickPick(
+							[...matchingLocalRepoPaths, 'Choose a different location'],
+							{ placeHolder: 'Matching repository found. Choose a location to open it.' },
+						);
+
+						if (chosenRepoPath == null) {
+							action = DeepLinkServiceAction.DeepLinkCancelled;
+							break;
+						} else if (chosenRepoPath !== 'Choose a different location') {
+							repoOpenUri = Uri.file(chosenRepoPath);
+							repoOpenType = 'folder';
+						}
+					}
+
+					if (repoOpenType == null) {
+						repoOpenType = await this.showOpenTypePrompt({
+							customMessage:
+								chosenRepoPath === 'Choose a different location'
+									? 'Please choose an option to open the repository'
+									: undefined,
+						});
+					}
+
 					if (!repoOpenType) {
 						action = DeepLinkServiceAction.DeepLinkCancelled;
 						break;
 					}
 
-					repoOpenLocation = await this.showOpenLocationPrompt(repoOpenType);
+					const repoOpenLocation = await this.showOpenLocationPrompt(repoOpenType);
 					if (!repoOpenLocation) {
 						action = DeepLinkServiceAction.DeepLinkCancelled;
 						break;
 					}
 
-					repoOpenUri = (
-						await window.showOpenDialog({
-							title: `Choose a ${
-								repoOpenType === DeepLinkRepoOpenType.Workspace ? 'workspace' : 'folder'
-							} to ${
-								repoOpenType === DeepLinkRepoOpenType.Clone
-									? 'clone the repository to'
-									: 'open the repository'
-							}`,
-							canSelectFiles: repoOpenType === DeepLinkRepoOpenType.Workspace,
-							canSelectFolders: repoOpenType !== DeepLinkRepoOpenType.Workspace,
-							canSelectMany: false,
-							...(repoOpenType === DeepLinkRepoOpenType.Workspace && {
-								filters: { Workspaces: ['code-workspace'] },
-							}),
-						})
-					)?.[0];
+					if (repoOpenUri == null) {
+						repoOpenUri = (
+							await window.showOpenDialog({
+								title: `Choose a ${repoOpenType === 'workspace' ? 'workspace' : 'folder'} to ${
+									repoOpenType === 'clone' ? 'clone the repository to' : 'open the repository'
+								}`,
+								canSelectFiles: repoOpenType === 'workspace',
+								canSelectFolders: repoOpenType !== 'workspace',
+								canSelectMany: false,
+								...(repoOpenType === 'workspace' && {
+									filters: { Workspaces: ['code-workspace'] },
+								}),
+							})
+						)?.[0];
+					}
 
 					if (!repoOpenUri) {
 						action = DeepLinkServiceAction.DeepLinkCancelled;
 						break;
 					}
 
-					if (repoOpenUri != null && remoteUrl != null && repoOpenType === DeepLinkRepoOpenType.Clone) {
+					if (repoOpenUri != null && remoteUrl != null && repoOpenType === 'clone') {
 						// clone the repository, then set repoOpenUri to the repo path
+						let repoClonePath;
 						try {
 							repoClonePath = await window.withProgress(
 								{
 									location: ProgressLocation.Notification,
 									title: `Cloning repository for link: ${this._context.url}}`,
 								},
-								// eslint-disable-next-line no-loop-func
+
 								async () => this.container.git.clone(remoteUrl, repoOpenUri?.fsPath ?? ''),
 							);
 						} catch {
@@ -502,10 +599,25 @@ export class DeepLinkService implements Disposable {
 						repoOpenUri = Uri.file(repoClonePath);
 					}
 
+					// Add the repo to the repo path mapping if it exists
 					if (
-						repoOpenLocation === OpenWorkspaceLocation.AddToWorkspace &&
-						(workspace.workspaceFolders?.length || 0) > 1
+						repoOpenType !== 'current' &&
+						repoOpenType !== 'workspace' &&
+						!matchingLocalRepoPaths.includes(repoOpenUri.fsPath)
 					) {
+						const chosenRepo = await this.container.git.getOrOpenRepository(repoOpenUri, {
+							closeOnOpen: true,
+							detectNested: false,
+						});
+						if (chosenRepo != null) {
+							await this.container.repositoryPathMapping.writeLocalRepoPath(
+								{ remoteUrl: remoteUrl },
+								chosenRepo.uri.fsPath,
+							);
+						}
+					}
+
+					if (repoOpenLocation === 'addToWorkspace' && (workspace.workspaceFolders?.length || 0) > 1) {
 						action = DeepLinkServiceAction.OpenRepo;
 					} else {
 						// Deep link will resolve in a different service instance
@@ -518,72 +630,128 @@ export class DeepLinkService implements Disposable {
 
 					openWorkspace(repoOpenUri, { location: repoOpenLocation });
 					break;
-
-				case DeepLinkServiceState.OpeningRepo:
+				}
+				case DeepLinkServiceState.OpeningRepo: {
 					this._disposables.push(
 						once(this.container.git.onDidChangeRepositories)(() => {
 							queueMicrotask(() => this.processDeepLink(DeepLinkServiceAction.RepoAdded));
 						}),
 					);
 					return;
+				}
+				case DeepLinkServiceState.RemoteMatch: {
+					if (repoPath && repo && !remoteUrl && !secondaryRemoteUrl) {
+						action = DeepLinkServiceAction.RemoteMatchUnneeded;
+						break;
+					}
 
-				case DeepLinkServiceState.RemoteMatch:
-					if (!repo || !remoteUrl) {
+					if (!repo || (!remoteUrl && !secondaryRemoteUrl)) {
 						action = DeepLinkServiceAction.DeepLinkErrored;
 						message = 'Missing repository or remote url.';
 						break;
 					}
 
-					matchingRemotes = await repo.getRemotes({ filter: r => r.url === remoteUrl });
-					if (matchingRemotes.length > 0) {
-						this._context.remote = matchingRemotes[0];
-						action = DeepLinkServiceAction.RemoteMatched;
-						break;
+					if (remoteUrl && !remote) {
+						const matchingRemotes = await repo.getRemotes({ filter: r => r.url === remoteUrl });
+						if (matchingRemotes.length > 0) {
+							this._context.remote = matchingRemotes[0];
+						}
 					}
 
-					if (!this._context.remote) {
+					if (secondaryRemoteUrl && !secondaryRemote) {
+						const matchingRemotes = await repo.getRemotes({ filter: r => r.url === secondaryRemoteUrl });
+						if (matchingRemotes.length > 0) {
+							this._context.secondaryRemote = matchingRemotes[0];
+						}
+					}
+
+					if (
+						(remoteUrl && !this._context.remote) ||
+						(secondaryRemoteUrl && !this._context.secondaryRemote)
+					) {
 						action = DeepLinkServiceAction.RemoteMatchFailed;
+					} else {
+						action = DeepLinkServiceAction.RemoteMatched;
 					}
 
 					break;
-
-				case DeepLinkServiceState.AddRemote:
-					if (!repo || !remoteUrl) {
+				}
+				case DeepLinkServiceState.AddRemote: {
+					if (!repo || (!remoteUrl && !secondaryRemoteUrl)) {
 						action = DeepLinkServiceAction.DeepLinkErrored;
 						message = 'Missing repository or remote url.';
 						break;
 					}
 
-					remoteName = await this.showAddRemotePrompt(
-						remoteUrl,
-						(await repo.getRemotes()).map(r => r.name),
-					);
+					let remoteName: string | undefined;
+					let secondaryRemoteName: string | undefined;
 
-					if (!remoteName) {
+					if (remoteUrl && !remote) {
+						remoteName = await this.showAddRemotePrompt(
+							remoteUrl,
+							(await repo.getRemotes()).map(r => r.name),
+						);
+
+						if (remoteName) {
+							try {
+								await repo.addRemote(remoteName, remoteUrl, { fetch: true });
+							} catch {
+								action = DeepLinkServiceAction.DeepLinkErrored;
+								message = 'Failed to add remote.';
+								break;
+							}
+
+							[this._context.remote] = await repo.getRemotes({ filter: r => r.url === remoteUrl });
+							if (!this._context.remote) {
+								action = DeepLinkServiceAction.DeepLinkErrored;
+								message = 'Failed to add remote.';
+								break;
+							}
+						}
+					}
+
+					if (secondaryRemoteUrl && !secondaryRemote) {
+						secondaryRemoteName = await this.showAddRemotePrompt(
+							secondaryRemoteUrl,
+							(await repo.getRemotes()).map(r => r.name),
+						);
+
+						if (secondaryRemoteName) {
+							try {
+								await repo.addRemote(secondaryRemoteName, secondaryRemoteUrl, { fetch: true });
+							} catch {
+								action = DeepLinkServiceAction.DeepLinkErrored;
+								message = 'Failed to add remote.';
+								break;
+							}
+
+							[this._context.secondaryRemote] = await repo.getRemotes({
+								filter: r => r.url === secondaryRemoteUrl,
+							});
+							if (!this._context.secondaryRemote) {
+								action = DeepLinkServiceAction.DeepLinkErrored;
+								message = 'Failed to add remote.';
+								break;
+							}
+						}
+					}
+
+					if (this._context.secondaryRemote && !this._context.remote) {
+						this._context.remote = this._context.secondaryRemote;
+					}
+
+					if (!remoteName && !secondaryRemoteName) {
 						action = DeepLinkServiceAction.DeepLinkCancelled;
-						break;
-					}
-
-					try {
-						await repo.addRemote(remoteName, remoteUrl, { fetch: true });
-					} catch {
+					} else if (!this._context.remote) {
 						action = DeepLinkServiceAction.DeepLinkErrored;
 						message = 'Failed to add remote.';
-						break;
-					}
-
-					[this._context.remote] = await repo.getRemotes({ filter: r => r.url === remoteUrl });
-					if (!this._context.remote) {
-						action = DeepLinkServiceAction.DeepLinkErrored;
-						message = 'Failed to add remote.';
-						break;
 					}
 
 					action = DeepLinkServiceAction.RemoteAdded;
 					break;
-
+				}
 				case DeepLinkServiceState.TargetMatch:
-				case DeepLinkServiceState.FetchedTargetMatch:
+				case DeepLinkServiceState.FetchedTargetMatch: {
 					if (!repo || !targetType) {
 						action = DeepLinkServiceAction.DeepLinkErrored;
 						message = 'Missing repository or target type.';
@@ -620,8 +788,8 @@ export class DeepLinkService implements Disposable {
 							? DeepLinkServiceAction.TargetsMatched
 							: DeepLinkServiceAction.TargetMatched;
 					break;
-
-				case DeepLinkServiceState.Fetch:
+				}
+				case DeepLinkServiceState.Fetch: {
 					if (!repo || !remote) {
 						action = DeepLinkServiceAction.DeepLinkErrored;
 						message = 'Missing repository or remote.';
@@ -641,10 +809,16 @@ export class DeepLinkService implements Disposable {
 						break;
 					}
 
+					if (secondaryRemote && secondaryRemote.name !== remote.name) {
+						try {
+							await repo.fetch({ remote: secondaryRemote.name, progress: true });
+						} catch {}
+					}
+
 					action = DeepLinkServiceAction.TargetFetched;
 					break;
-
-				case DeepLinkServiceState.OpenGraph:
+				}
+				case DeepLinkServiceState.OpenGraph: {
 					if (!repo || !targetType) {
 						action = DeepLinkServiceAction.DeepLinkErrored;
 						message = 'Missing repository or target type.';
@@ -669,15 +843,20 @@ export class DeepLinkService implements Disposable {
 
 					action = DeepLinkServiceAction.DeepLinkResolved;
 					break;
-
-				case DeepLinkServiceState.OpenComparison:
+				}
+				case DeepLinkServiceState.OpenComparison: {
 					if (!repo) {
 						action = DeepLinkServiceAction.DeepLinkErrored;
 						message = 'Missing repository.';
 						break;
 					}
 
-					if (targetSha == null || secondaryTargetSha == null) {
+					if (
+						targetId == null ||
+						secondaryTargetId == null ||
+						targetSha == null ||
+						secondaryTargetSha == null
+					) {
 						action = DeepLinkServiceAction.DeepLinkErrored;
 						message = 'Missing target or secondary target.';
 						break;
@@ -685,18 +864,19 @@ export class DeepLinkService implements Disposable {
 
 					await this.container.searchAndCompareView.compare(
 						repo.path,
-						secondaryTargetSha === '' || isSha(secondaryTargetSha)
-							? secondaryTargetSha
-							: { label: secondaryTargetSha, ref: secondaryTargetSha },
-						targetSha === '' || isSha(targetSha) ? targetSha : { label: targetSha, ref: targetSha },
+						secondaryTargetId === '' || isSha(secondaryTargetId)
+							? secondaryTargetId
+							: { label: secondaryTargetId, ref: secondaryTargetSha },
+						targetId === '' || isSha(targetId) ? targetId : { label: targetId, ref: targetSha },
 					);
 					action = DeepLinkServiceAction.DeepLinkResolved;
 					break;
-
-				default:
+				}
+				default: {
 					action = DeepLinkServiceAction.DeepLinkErrored;
 					message = 'Unknown state.';
 					break;
+				}
 			}
 		}
 	}
@@ -770,6 +950,7 @@ export class DeepLinkService implements Disposable {
 		}
 
 		const schemeOverride = configuration.get('deepLinks.schemeOverride');
+
 		const scheme = !schemeOverride ? 'vscode' : schemeOverride === true ? env.uriScheme : schemeOverride;
 		let target;
 		if (targetType === DeepLinkType.Comparison) {
@@ -781,14 +962,29 @@ export class DeepLinkService implements Disposable {
 		}
 
 		// Start with the prefix, add the repo prefix and the repo ID to the URL, and then add the target tag and target ID to the URL (if applicable)
-		const url = new URL(
-			`${scheme}://${this.container.context.extension.id}/${UriTypes.DeepLink}/${DeepLinkType.Repository}/${repoId}${target}`,
+		const deepLink = new URL(
+			`${scheme}://${this.container.context.extension.id}/${'link' satisfies UriTypes}/${
+				DeepLinkType.Repository
+			}/${repoId}${target}`,
 		);
 
 		// Add the remote URL as a query parameter
-		url.searchParams.set('url', remoteUrl);
+		deepLink.searchParams.set('url', remoteUrl);
 		const params = new URLSearchParams();
 		params.set('url', remoteUrl);
-		return url;
+
+		let modePrefixString = '';
+		if (this.container.env === 'dev') {
+			modePrefixString = 'dev.';
+		} else if (this.container.env === 'staging') {
+			modePrefixString = 'staging.';
+		}
+
+		const deepLinkRedirectUrl = new URL(
+			`https://${modePrefixString}gitkraken.dev/link/${encodeURIComponent(
+				Buffer.from(deepLink.href).toString('base64'),
+			)}`,
+		);
+		return deepLinkRedirectUrl;
 	}
 }

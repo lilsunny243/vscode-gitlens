@@ -13,7 +13,6 @@ import type {
 	LocalWorkspace,
 	LocalWorkspaceRepositoryDescriptor,
 } from '../../plus/workspaces/models';
-import { WorkspaceType } from '../../plus/workspaces/models';
 import { findLastIndex } from '../../system/array';
 import { gate } from '../../system/decorators/gate';
 import { debug, log } from '../../system/decorators/log';
@@ -83,6 +82,7 @@ export class RepositoryNode extends SubscribeableViewNode<ViewsWithRepositories>
 			const status = await this._status;
 			if (status != null) {
 				const branch = new GitBranch(
+					this.view.container,
 					status.repoPath,
 					status.branch,
 					false,
@@ -218,9 +218,9 @@ export class RepositoryNode extends SubscribeableViewNode<ViewsWithRepositories>
 		}
 		if (workspace != null) {
 			contextValue += '+workspace';
-			if (workspace.type === WorkspaceType.Cloud) {
+			if (workspace.type === 'cloud') {
 				contextValue += '+cloud';
-			} else if (workspace.type === WorkspaceType.Local) {
+			} else if (workspace.type === 'local') {
 				contextValue += '+local';
 			}
 		}

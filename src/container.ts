@@ -7,10 +7,11 @@ import { FileAnnotationController } from './annotations/fileAnnotationController
 import { LineAnnotationController } from './annotations/lineAnnotationController';
 import { ActionRunners } from './api/actionRunners';
 import { setDefaultGravatarsStyle } from './avatars';
+import { CacheProvider } from './cache';
 import { GitCodeLensController } from './codelens/codeLensController';
 import type { ToggleFileAnnotationCommandArgs } from './commands';
-import type { FileAnnotationType, ModeConfig } from './config';
-import { AnnotationsToggleMode, DateSource, DateStyle, fromOutputLevel } from './config';
+import type { DateStyle, FileAnnotationType, ModeConfig } from './config';
+import { fromOutputLevel } from './config';
 import { Commands, extensionPrefix } from './constants';
 import { EventBus } from './eventBus';
 import { GitFileSystemProvider } from './git/fsProvider';
@@ -33,7 +34,7 @@ import {
 } from './plus/webviews/graph/registration';
 import { GraphStatusBarController } from './plus/webviews/graph/statusbar';
 import { registerTimelineWebviewPanel, registerTimelineWebviewView } from './plus/webviews/timeline/registration';
-import { WorkspacesService } from './plus/workspaces/workspacesService';
+import { scheduleAddMissingCurrentWorkspaceRepos, WorkspacesService } from './plus/workspaces/workspacesService';
 import { StatusBarController } from './statusbar/statusBarController';
 import { executeCommand } from './system/command';
 import { configuration } from './system/configuration';
@@ -127,8 +128,8 @@ export class Container {
 
 	readonly CommitDateFormatting = {
 		dateFormat: null as string | null,
-		dateSource: DateSource.Authored,
-		dateStyle: DateStyle.Relative,
+		dateSource: 'authored',
+		dateStyle: 'relative',
 
 		reset: () => {
 			this.CommitDateFormatting.dateFormat = configuration.get('defaultDateFormat');
@@ -148,7 +149,7 @@ export class Container {
 
 	readonly PullRequestDateFormatting = {
 		dateFormat: null as string | null,
-		dateStyle: DateStyle.Relative,
+		dateStyle: 'relative',
 
 		reset: () => {
 			this.PullRequestDateFormatting.dateFormat = configuration.get('defaultDateFormat');
@@ -158,7 +159,7 @@ export class Container {
 
 	readonly TagDateFormatting = {
 		dateFormat: null as string | null,
-		dateStyle: DateStyle.Relative,
+		dateStyle: 'relative',
 
 		reset: () => {
 			this.TagDateFormatting.dateFormat = configuration.get('defaultDateFormat');
@@ -166,6 +167,7 @@ export class Container {
 		},
 	};
 
+	private readonly _connection: ServerConnection;
 	private _disposables: Disposable[];
 	private _terminalLinks: GitTerminalLinkProvider | undefined;
 	private _webviews: WebviewsController;
@@ -189,18 +191,15 @@ export class Container {
 			configuration.onDidChangeAny(this.onAnyConfigurationChanged, this),
 		];
 
-		this._richRemoteProviders = new RichRemoteProviderService(this);
+		this._disposables.push((this._connection = new ServerConnection(this)));
 
-		const connection = new ServerConnection(this);
-		this._disposables.push(connection);
-
-		this._disposables.push((this._accountAuthentication = new AccountAuthenticationProvider(this, connection)));
-		this._disposables.push((this._subscription = new SubscriptionService(this, connection, previousVersion)));
-		this._disposables.push((this._workspaces = new WorkspacesService(this, connection)));
+		this._disposables.push(
+			(this._accountAuthentication = new AccountAuthenticationProvider(this, this._connection)),
+		);
+		this._disposables.push((this._subscription = new SubscriptionService(this, this._connection, previousVersion)));
 
 		this._disposables.push((this._git = new GitProviderService(this)));
 		this._disposables.push(new GitFileSystemProvider(this));
-		this._disposables.push((this._repositoryPathMapping = getSupportedRepositoryPathMappingProvider(this)));
 
 		this._disposables.push((this._uri = new UriService(this)));
 
@@ -212,7 +211,6 @@ export class Container {
 		this._disposables.push((this._keyboard = new Keyboard()));
 		this._disposables.push((this._vsls = new VslsController(this)));
 		this._disposables.push((this._eventBus = new EventBus()));
-		this._disposables.push((this._ai = new AIProviderService(this)));
 
 		this._disposables.push((this._fileAnnotationController = new FileAnnotationController(this)));
 		this._disposables.push((this._lineAnnotationController = new LineAnnotationController(this)));
@@ -226,9 +224,7 @@ export class Container {
 
 		this._disposables.push((this._graphPanel = registerGraphWebviewPanel(this._webviews)));
 		this._disposables.push(registerGraphWebviewCommands(this, this._graphPanel));
-		if (configuration.get('graph.layout') === 'panel') {
-			this._disposables.push((this._graphView = registerGraphWebviewView(this._webviews)));
-		}
+		this._disposables.push((this._graphView = registerGraphWebviewView(this._webviews)));
 		this._disposables.push(new GraphStatusBarController(this));
 
 		const settingsWebviewPanel = registerSettingsWebviewPanel(this._webviews);
@@ -276,6 +272,8 @@ export class Container {
 		context.subscriptions.push({
 			dispose: () => this._disposables.reverse().forEach(d => void d.dispose()),
 		});
+
+		scheduleAddMissingCurrentWorkspaceRepos(this);
 	}
 
 	deactivate() {
@@ -324,16 +322,6 @@ export class Container {
 		if (configuration.changed(e, 'mode')) {
 			this.ensureModeApplied();
 		}
-
-		if (configuration.changed(e, 'graph.layout')) {
-			if (configuration.get('graph.layout') === 'panel') {
-				this._graphPanel?.close();
-				this._graphView = registerGraphWebviewView(this._webviews);
-			} else {
-				this._graphView?.dispose();
-				this._graphView = undefined;
-			}
-		}
 	}
 
 	private _accountAuthentication: AccountAuthenticationProvider;
@@ -346,8 +334,11 @@ export class Container {
 		return this._actionRunners;
 	}
 
-	private readonly _ai: AIProviderService;
+	private _ai: AIProviderService | undefined;
 	get ai() {
+		if (this._ai == null) {
+			this._disposables.push((this._ai = new AIProviderService(this)));
+		}
 		return this._ai;
 	}
 
@@ -363,6 +354,15 @@ export class Container {
 	private readonly _branchesView: BranchesView;
 	get branchesView() {
 		return this._branchesView;
+	}
+
+	private _cache: CacheProvider | undefined;
+	get cache() {
+		if (this._cache == null) {
+			this._disposables.push((this._cache = new CacheProvider(this)));
+		}
+
+		return this._cache;
 	}
 
 	private readonly _codeLensController: GitCodeLensController;
@@ -482,12 +482,8 @@ export class Container {
 	}
 
 	private readonly _graphPanel: WebviewPanelProxy;
-	private _graphView: WebviewViewProxy | undefined;
+	private readonly _graphView: WebviewViewProxy;
 	get graphView() {
-		if (this._graphView == null) {
-			this._disposables.push((this._graphView = registerGraphWebviewView(this._webviews)));
-		}
-
 		return this._graphView;
 	}
 
@@ -545,11 +541,6 @@ export class Container {
 		return this._lineTracker;
 	}
 
-	private readonly _repositoryPathMapping: RepositoryPathMappingProvider;
-	get repositoryPathMapping() {
-		return this._repositoryPathMapping;
-	}
-
 	private readonly _prerelease;
 	get prerelease() {
 		return this._prerelease;
@@ -575,19 +566,25 @@ export class Container {
 		return this._repositoriesView;
 	}
 
+	private _repositoryPathMapping: RepositoryPathMappingProvider | undefined;
+	get repositoryPathMapping() {
+		if (this._repositoryPathMapping == null) {
+			this._disposables.push((this._repositoryPathMapping = getSupportedRepositoryPathMappingProvider(this)));
+		}
+		return this._repositoryPathMapping;
+	}
+
+	private _richRemoteProviders: RichRemoteProviderService | undefined;
+	get richRemoteProviders(): RichRemoteProviderService {
+		if (this._richRemoteProviders == null) {
+			this._richRemoteProviders = new RichRemoteProviderService(this);
+		}
+		return this._richRemoteProviders;
+	}
+
 	private readonly _searchAndCompareView: SearchAndCompareView;
 	get searchAndCompareView() {
 		return this._searchAndCompareView;
-	}
-
-	private _subscription: SubscriptionService;
-	get subscription() {
-		return this._subscription;
-	}
-
-	private readonly _richRemoteProviders: RichRemoteProviderService;
-	get richRemoteProviders(): RichRemoteProviderService {
-		return this._richRemoteProviders;
 	}
 
 	private readonly _stashesView: StashesView;
@@ -603,6 +600,11 @@ export class Container {
 	private readonly _storage: Storage;
 	get storage(): Storage {
 		return this._storage;
+	}
+
+	private _subscription: SubscriptionService;
+	get subscription() {
+		return this._subscription;
 	}
 
 	private readonly _tagsView: TagsView;
@@ -648,8 +650,11 @@ export class Container {
 		return this._vsls;
 	}
 
-	private _workspaces: WorkspacesService;
+	private _workspaces: WorkspacesService | undefined;
 	get workspaces() {
+		if (this._workspaces == null) {
+			this._disposables.push((this._workspaces = new WorkspacesService(this, this._connection)));
+		}
 		return this._workspaces;
 	}
 
@@ -708,12 +713,12 @@ export class Container {
 			get: (section, value) => {
 				if (mode.annotations != null) {
 					if (configuration.matches(`${mode.annotations}.toggleMode`, section, value)) {
-						value = AnnotationsToggleMode.Window as typeof value;
+						value = 'window' as typeof value;
 						return value;
 					}
 
 					if (configuration.matches(mode.annotations, section, value)) {
-						value.toggleMode = AnnotationsToggleMode.Window;
+						value.toggleMode = 'window';
 						return value;
 					}
 				}
@@ -734,7 +739,7 @@ export class Container {
 			},
 			getAll: cfg => {
 				if (mode.annotations != null) {
-					cfg[mode.annotations].toggleMode = AnnotationsToggleMode.Window;
+					cfg[mode.annotations].toggleMode = 'window';
 				}
 
 				if (mode.codeLens != null) {

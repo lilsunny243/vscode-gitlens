@@ -3,9 +3,7 @@ import type { GitReference } from '../../git/models/reference';
 import type { GitRemote } from '../../git/models/remote';
 import type { Repository } from '../../git/models/repository';
 
-export const enum UriTypes {
-	DeepLink = 'link',
-}
+export type UriTypes = 'link';
 
 export enum DeepLinkType {
 	Branch = 'b',
@@ -53,6 +51,7 @@ export interface DeepLink {
 	repoPath?: string;
 	targetId?: string;
 	secondaryTargetId?: string;
+	secondaryRemoteUrl?: string;
 }
 
 export function parseDeepLinkUri(uri: Uri): DeepLink | undefined {
@@ -60,7 +59,7 @@ export function parseDeepLinkUri(uri: Uri): DeepLink | undefined {
 	// For example, if the uri is /link/r/{repoId}/b/{branchName}?url={remoteUrl},
 	// the link target id is {branchName}
 	const [, type, prefix, repoId, target, ...rest] = uri.path.split('/');
-	if (type !== UriTypes.DeepLink || prefix !== DeepLinkType.Repository) return undefined;
+	if (type !== 'link' || prefix !== DeepLinkType.Repository) return undefined;
 
 	const urlParams = new URLSearchParams(uri.query);
 	let remoteUrl = urlParams.get('url') ?? undefined;
@@ -86,6 +85,7 @@ export function parseDeepLinkUri(uri: Uri): DeepLink | undefined {
 
 	let targetId: string;
 	let secondaryTargetId: string | undefined;
+	let secondaryRemoteUrl: string | undefined;
 	const joined = rest.join('/');
 
 	if (target === DeepLinkType.Comparison) {
@@ -93,6 +93,10 @@ export function parseDeepLinkUri(uri: Uri): DeepLink | undefined {
 		if (split.length !== 3) return undefined;
 		targetId = split[0];
 		secondaryTargetId = split[2];
+		secondaryRemoteUrl = urlParams.get('prRepoUrl') ?? undefined;
+		if (secondaryRemoteUrl != null) {
+			secondaryRemoteUrl = decodeURIComponent(secondaryRemoteUrl);
+		}
 	} else {
 		targetId = joined;
 	}
@@ -104,6 +108,7 @@ export function parseDeepLinkUri(uri: Uri): DeepLink | undefined {
 		repoPath: repoPath,
 		targetId: targetId,
 		secondaryTargetId: secondaryTargetId,
+		secondaryRemoteUrl: secondaryRemoteUrl,
 	};
 }
 
@@ -129,14 +134,14 @@ export const enum DeepLinkServiceAction {
 	DeepLinkStored,
 	DeepLinkErrored,
 	OpenRepo,
-	RepoMatchedWithId,
-	RepoMatchedWithPath,
-	RepoMatchedWithRemoteUrl,
+	RepoMatched,
+	RepoMatchedInLocalMapping,
 	RepoMatchFailed,
 	RepoAdded,
 	RepoOpened,
 	RemoteMatched,
 	RemoteMatchFailed,
+	RemoteMatchUnneeded,
 	RemoteAdded,
 	TargetMatched,
 	TargetsMatched,
@@ -144,11 +149,7 @@ export const enum DeepLinkServiceAction {
 	TargetFetched,
 }
 
-export const enum DeepLinkRepoOpenType {
-	Clone = 'clone',
-	Folder = 'folder',
-	Workspace = 'workspace',
-}
+export type DeepLinkRepoOpenType = 'clone' | 'folder' | 'workspace' | 'current';
 
 export interface DeepLinkServiceContext {
 	state: DeepLinkServiceState;
@@ -157,9 +158,11 @@ export interface DeepLinkServiceContext {
 	repo?: Repository | undefined;
 	remoteUrl?: string | undefined;
 	remote?: GitRemote | undefined;
+	secondaryRemote?: GitRemote | undefined;
 	repoPath?: string | undefined;
 	targetId?: string | undefined;
 	secondaryTargetId?: string | undefined;
+	secondaryRemoteUrl?: string | undefined;
 	targetType?: DeepLinkType | undefined;
 	targetSha?: string | undefined;
 	secondaryTargetSha?: string | undefined;
@@ -171,9 +174,8 @@ export const deepLinkStateTransitionTable: Record<string, Record<string, DeepLin
 	},
 	[DeepLinkServiceState.RepoMatch]: {
 		[DeepLinkServiceAction.DeepLinkErrored]: DeepLinkServiceState.Idle,
-		[DeepLinkServiceAction.RepoMatchedWithId]: DeepLinkServiceState.RemoteMatch,
-		[DeepLinkServiceAction.RepoMatchedWithPath]: DeepLinkServiceState.TargetMatch,
-		[DeepLinkServiceAction.RepoMatchedWithRemoteUrl]: DeepLinkServiceState.TargetMatch,
+		[DeepLinkServiceAction.RepoMatched]: DeepLinkServiceState.RemoteMatch,
+		[DeepLinkServiceAction.RepoMatchedInLocalMapping]: DeepLinkServiceState.CloneOrAddRepo,
 		[DeepLinkServiceAction.RepoMatchFailed]: DeepLinkServiceState.CloneOrAddRepo,
 	},
 	[DeepLinkServiceState.CloneOrAddRepo]: {
@@ -189,15 +191,14 @@ export const deepLinkStateTransitionTable: Record<string, Record<string, DeepLin
 		[DeepLinkServiceAction.DeepLinkCancelled]: DeepLinkServiceState.Idle,
 	},
 	[DeepLinkServiceState.AddedRepoMatch]: {
-		[DeepLinkServiceAction.RepoMatchedWithId]: DeepLinkServiceState.RemoteMatch,
-		[DeepLinkServiceAction.RepoMatchedWithPath]: DeepLinkServiceState.TargetMatch,
-		[DeepLinkServiceAction.RepoMatchedWithRemoteUrl]: DeepLinkServiceState.TargetMatch,
+		[DeepLinkServiceAction.RepoMatched]: DeepLinkServiceState.RemoteMatch,
 		[DeepLinkServiceAction.DeepLinkErrored]: DeepLinkServiceState.Idle,
 	},
 	[DeepLinkServiceState.RemoteMatch]: {
 		[DeepLinkServiceAction.DeepLinkErrored]: DeepLinkServiceState.Idle,
 		[DeepLinkServiceAction.RemoteMatched]: DeepLinkServiceState.TargetMatch,
 		[DeepLinkServiceAction.RemoteMatchFailed]: DeepLinkServiceState.AddRemote,
+		[DeepLinkServiceAction.RemoteMatchUnneeded]: DeepLinkServiceState.TargetMatch,
 	},
 	[DeepLinkServiceState.AddRemote]: {
 		[DeepLinkServiceAction.RemoteAdded]: DeepLinkServiceState.TargetMatch,

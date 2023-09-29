@@ -222,7 +222,7 @@ export const enum Commands {
 	RefreshHover = 'gitlens.refreshHover',
 	RefreshTimelinePage = 'gitlens.timeline.refresh',
 	ResetAvatarCache = 'gitlens.resetAvatarCache',
-	ResetOpenAIKey = 'gitlens.resetOpenAIKey',
+	ResetAIKey = 'gitlens.resetAIKey',
 	ResetSuppressedWarnings = 'gitlens.resetSuppressedWarnings',
 	ResetTrackedUsage = 'gitlens.resetTrackedUsage',
 	ResetViewsLayout = 'gitlens.resetViewsLayout',
@@ -243,6 +243,7 @@ export const enum Commands {
 	ShowHomeView = 'gitlens.showHomeView',
 	ShowAccountView = 'gitlens.showAccountView',
 	ShowInCommitGraph = 'gitlens.showInCommitGraph',
+	ShowInCommitGraphView = 'gitlens.showInCommitGraphView',
 	ShowInDetailsView = 'gitlens.showInDetailsView',
 	ShowLastQuickPick = 'gitlens.showLastQuickPick',
 	ShowLineCommitInView = 'gitlens.showLineCommitInView',
@@ -457,7 +458,7 @@ export type TreeViewTypes =
 export type TreeViewIds = `gitlens.views.${TreeViewTypes}`;
 
 export type WebviewTypes = 'graph' | 'settings' | 'timeline' | 'welcome' | 'focus';
-export type WebviewIds = `gitlens.views.${WebviewTypes}`;
+export type WebviewIds = `gitlens.${WebviewTypes}`;
 
 export type WebviewViewTypes = 'account' | 'commitDetails' | 'graph' | 'graphDetails' | 'home' | 'timeline';
 export type WebviewViewIds = `gitlens.views.${WebviewViewTypes}`;
@@ -535,7 +536,6 @@ export type ContextKeys =
 	| `${typeof extensionPrefix}:views:fileHistory:editorFollowing`
 	| `${typeof extensionPrefix}:views:lineHistory:editorFollowing`
 	| `${typeof extensionPrefix}:views:repositories:autoRefresh`
-	| `${typeof extensionPrefix}:views:searchAndCompare:keepResults`
 	| `${typeof extensionPrefix}:vsls`
 	| `${typeof extensionPrefix}:plus`
 	| `${typeof extensionPrefix}:plus:disallowedRepos`
@@ -714,7 +714,7 @@ export const enum SyncedStorageKeys {
 }
 
 export type DeprecatedGlobalStorage = {
-	/** @deprecated use `confirm:ai:send:openai` */
+	/** @deprecated use `confirm:ai:tos:${AIProviders}` */
 	'confirm:sendToOpenAI': boolean;
 	/** @deprecated */
 	'home:actions:completed': ('dismissed:welcome' | 'opened:scm')[];
@@ -748,7 +748,7 @@ export type GlobalStorage = {
 	pendingWelcomeOnFocus: boolean;
 	pendingWhatsNewOnFocus: boolean;
 	// Don't change this key name ('premium`) as its the stored subscription
-	'premium:subscription': Stored<Subscription>;
+	'premium:subscription': Stored<Subscription & { lastValidatedAt: number | undefined }>;
 	'synced:version': string;
 	// Keep the pre-release version separate from the released version
 	'synced:preVersion': string;
@@ -762,14 +762,14 @@ export type GlobalStorage = {
 };
 
 export type DeprecatedWorkspaceStorage = {
-	/** @deprecated use `confirm:ai:send:openai` */
+	/** @deprecated use `confirm:ai:tos:${AIProviders}` */
 	'confirm:sendToOpenAI': boolean;
 	/** @deprecated */
 	'graph:banners:dismissed': Record<string, boolean>;
 	/** @deprecated use `graph:filtersByRepo.excludeRefs` */
 	'graph:hiddenRefs': Record<string, StoredGraphExcludedRef>;
-	/** @deprecated use `views:searchAndCompare:pinned` */
-	'pinned:comparisons': Record<string, DeprecatedPinnedComparison>;
+	/** @deprecated */
+	'views:searchAndCompare:keepResults': boolean;
 };
 
 export type WorkspaceStorage = {
@@ -783,8 +783,7 @@ export type WorkspaceStorage = {
 	'starred:branches': StoredStarred;
 	'starred:repositories': StoredStarred;
 	'views:repositories:autoRefresh': boolean;
-	'views:searchAndCompare:keepResults': boolean;
-	'views:searchAndCompare:pinned': StoredPinnedItems;
+	'views:searchAndCompare:pinned': StoredSearchAndCompareItems;
 	'views:commitDetails:autolinksExpanded': boolean;
 } & { [key in `confirm:ai:tos:${AIProviders}`]: boolean } & { [key in `connected:${string}`]: boolean };
 
@@ -810,6 +809,7 @@ export interface StoredBranchComparison {
 	ref: string;
 	notation: '..' | '...' | undefined;
 	type: Exclude<ViewShowBranchComparison, false> | undefined;
+	checkedFiles?: string[];
 }
 
 export type StoredBranchComparisons = Record<string, string | StoredBranchComparison>;
@@ -852,16 +852,18 @@ export interface StoredNamedRef {
 	ref: string;
 }
 
-export interface StoredPinnedComparison {
+export interface StoredComparison {
 	type: 'comparison';
 	timestamp: number;
 	path: string;
 	ref1: StoredNamedRef;
 	ref2: StoredNamedRef;
 	notation?: '..' | '...';
+
+	checkedFiles?: string[];
 }
 
-export interface StoredPinnedSearch {
+export interface StoredSearch {
 	type: 'search';
 	timestamp: number;
 	path: string;
@@ -877,14 +879,7 @@ export interface StoredPinnedSearch {
 	search: StoredSearchQuery;
 }
 
-export type StoredPinnedItem = StoredPinnedComparison | StoredPinnedSearch;
-export type StoredPinnedItems = Record<string, StoredPinnedItem>;
+export type StoredSearchAndCompareItem = StoredComparison | StoredSearch;
+export type StoredSearchAndCompareItems = Record<string, StoredSearchAndCompareItem>;
 export type StoredStarred = Record<string, boolean>;
 export type RecentUsage = Record<string, number>;
-
-interface DeprecatedPinnedComparison {
-	path: string;
-	ref1: StoredNamedRef;
-	ref2: StoredNamedRef;
-	notation?: '..' | '...';
-}

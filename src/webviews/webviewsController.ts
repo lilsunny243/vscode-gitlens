@@ -7,7 +7,7 @@ import type {
 	WebviewViewResolveContext,
 } from 'vscode';
 import { Disposable, Uri, ViewColumn, window } from 'vscode';
-import type { Commands, WebviewTypes, WebviewViewTypes } from '../constants';
+import type { Commands, WebviewIds, WebviewTypes, WebviewViewIds, WebviewViewTypes } from '../constants';
 import type { Container } from '../container';
 import { ensurePlusFeaturesEnabled } from '../plus/subscription/utils';
 import { executeCoreCommand, registerCommand } from '../system/command';
@@ -15,11 +15,12 @@ import { debug } from '../system/decorators/log';
 import { Logger } from '../system/logger';
 import { getLogScope } from '../system/logger.scope';
 import type { TrackedUsageFeatures } from '../telemetry/usageTracker';
+import { WebviewCommandRegistrar } from './webviewCommandRegistrar';
 import type { WebviewProvider } from './webviewController';
 import { WebviewController } from './webviewController';
 
 export interface WebviewPanelDescriptor {
-	id: `gitlens.${WebviewTypes}`;
+	id: WebviewIds;
 	readonly fileName: string;
 	readonly iconPath: string;
 	readonly title: string;
@@ -37,7 +38,7 @@ interface WebviewPanelRegistration<State, SerializedState = State> {
 }
 
 export interface WebviewPanelProxy extends Disposable {
-	readonly id: `gitlens.${WebviewTypes}`;
+	readonly id: WebviewIds;
 	readonly ready: boolean;
 	readonly visible: boolean;
 	close(): void;
@@ -46,7 +47,7 @@ export interface WebviewPanelProxy extends Disposable {
 }
 
 export interface WebviewViewDescriptor {
-	id: `gitlens.views.${WebviewViewTypes}`;
+	id: WebviewViewIds;
 	readonly fileName: string;
 	readonly title: string;
 	readonly contextKeyPrefix: `gitlens:webviewView:${WebviewViewTypes}`;
@@ -65,7 +66,7 @@ interface WebviewViewRegistration<State, SerializedState = State> {
 }
 
 export interface WebviewViewProxy extends Disposable {
-	readonly id: `gitlens.views.${WebviewViewTypes}`;
+	readonly id: WebviewViewIds;
 	readonly ready: boolean;
 	readonly visible: boolean;
 	refresh(force?: boolean): Promise<void>;
@@ -74,10 +75,13 @@ export interface WebviewViewProxy extends Disposable {
 
 export class WebviewsController implements Disposable {
 	private readonly disposables: Disposable[] = [];
+	private readonly _commandRegistrar: WebviewCommandRegistrar;
 	private readonly _panels = new Map<string, WebviewPanelRegistration<any>>();
 	private readonly _views = new Map<string, WebviewViewRegistration<any>>();
 
-	constructor(private readonly container: Container) {}
+	constructor(private readonly container: Container) {
+		this.disposables.push((this._commandRegistrar = new WebviewCommandRegistrar()));
+	}
 
 	dispose() {
 		this.disposables.forEach(d => void d.dispose());
@@ -135,6 +139,7 @@ export class WebviewsController implements Disposable {
 
 						const controller = await WebviewController.create(
 							this.container,
+							this._commandRegistrar,
 							descriptor,
 							webviewView,
 							resolveProvider,
@@ -219,7 +224,7 @@ export class WebviewsController implements Disposable {
 		this._panels.set(descriptor.id, registration);
 
 		const disposables: Disposable[] = [];
-		const { container } = this;
+		const { container, _commandRegistrar: commandRegistrar } = this;
 
 		let serializedPanel: WebviewPanel | undefined;
 
@@ -273,7 +278,13 @@ export class WebviewsController implements Disposable {
 
 				panel.iconPath = Uri.file(container.context.asAbsolutePath(descriptor.iconPath));
 
-				controller = await WebviewController.create(container, descriptor, panel, resolveProvider);
+				controller = await WebviewController.create(
+					container,
+					commandRegistrar,
+					descriptor,
+					panel,
+					resolveProvider,
+				);
 				registration.controller = controller;
 
 				disposables.push(

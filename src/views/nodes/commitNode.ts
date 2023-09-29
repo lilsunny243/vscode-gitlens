@@ -1,7 +1,6 @@
 import type { Command } from 'vscode';
 import { MarkdownString, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState } from 'vscode';
 import type { DiffWithPreviousCommandArgs } from '../../commands';
-import { ViewFilesLayout } from '../../config';
 import type { Colors } from '../../constants';
 import { Commands } from '../../constants';
 import { CommitFormatter } from '../../git/formatters/commitFormatter';
@@ -12,6 +11,7 @@ import type { GitRevisionReference } from '../../git/models/reference';
 import type { GitRemote } from '../../git/models/remote';
 import type { RichRemoteProvider } from '../../git/remotes/richRemoteProvider';
 import { makeHierarchical } from '../../system/array';
+import { pauseOnCancelOrTimeoutMapTuplePromise } from '../../system/cancellation';
 import { configuration } from '../../system/configuration';
 import { getContext } from '../../system/context';
 import { gate } from '../../system/decorators/gate';
@@ -19,7 +19,7 @@ import { joinPaths, normalizePath } from '../../system/path';
 import type { Deferred } from '../../system/promise';
 import { defer, getSettledValue } from '../../system/promise';
 import { sortCompare } from '../../system/string';
-import { FileHistoryView } from '../fileHistoryView';
+import type { FileHistoryView } from '../fileHistoryView';
 import { TagsView } from '../tagsView';
 import type { ViewsWithCommits } from '../viewBase';
 import { CommitFileNode } from './commitFileNode';
@@ -69,8 +69,6 @@ export class CommitNode extends ViewRefNode<ViewsWithCommits | FileHistoryView, 
 	private _children: (PullRequestNode | FileNode)[] | undefined;
 
 	async getChildren(): Promise<ViewNode[]> {
-		if (this.view instanceof FileHistoryView) return [];
-
 		if (this._children == null) {
 			const commit = this.commit;
 
@@ -105,9 +103,7 @@ export class CommitNode extends ViewRefNode<ViewsWithCommits | FileHistoryView, 
 
 						// If we found a pull request, insert it into the children cache (if loaded) and refresh the node
 						if (pr != null && this._children != null) {
-							this._children.unshift(
-								new PullRequestNode(this.view as ViewsWithCommits, this, pr, commit),
-							);
+							this._children.unshift(new PullRequestNode(this.view, this, pr, commit));
 						}
 
 						// Refresh this node to add the pull request node or remove the spinner
@@ -123,7 +119,7 @@ export class CommitNode extends ViewRefNode<ViewsWithCommits | FileHistoryView, 
 				children.push(new CommitFileNode(this.view, this, c.file!, c));
 			}
 
-			if (this.view.config.files.layout !== ViewFilesLayout.List) {
+			if (this.view.config.files.layout !== 'list') {
 				const hierarchy = makeHierarchical(
 					children as FileNode[],
 					n => n.uri.relativePath.split('/'),
@@ -138,7 +134,7 @@ export class CommitNode extends ViewRefNode<ViewsWithCommits | FileHistoryView, 
 			}
 
 			if (pullRequest != null) {
-				children.unshift(new PullRequestNode(this.view as ViewsWithCommits, this, pullRequest, commit));
+				children.unshift(new PullRequestNode(this.view, this, pullRequest, commit));
 			}
 
 			this._children = children;
@@ -226,7 +222,7 @@ export class CommitNode extends ViewRefNode<ViewsWithCommits | FileHistoryView, 
 
 		let pendingPullRequest = this.getState('pendingPullRequest');
 		if (pendingPullRequest == null) {
-			pendingPullRequest = commit.getAssociatedPullRequest({ remote: remote });
+			pendingPullRequest = commit.getAssociatedPullRequest(remote);
 			this.storeState('pendingPullRequest', pendingPullRequest);
 
 			pullRequest = await pendingPullRequest;
@@ -240,46 +236,34 @@ export class CommitNode extends ViewRefNode<ViewsWithCommits | FileHistoryView, 
 	}
 
 	private async getTooltip() {
-		const remotes = await this.view.container.git.getRemotesWithProviders(this.commit.repoPath, { sort: true });
-		const remote = await this.view.container.git.getBestRemoteWithRichProvider(remotes);
+		const [remotesResult, _] = await Promise.allSettled([
+			this.view.container.git.getBestRemotesWithProviders(this.commit.repoPath),
+			this.commit.message == null ? this.commit.ensureFullDetails() : undefined,
+		]);
 
-		// If we have a "best" remote, move it to the front of the list
-		if (remote != null) {
-			remotes.sort((a, b) => (a === remote ? -1 : b === remote ? 1 : 0));
-		}
+		const remotes = getSettledValue(remotesResult, []);
+		const [remote] = remotes;
 
-		if (this.commit.message == null) {
-			await this.commit.ensureFullDetails();
-		}
-
-		let autolinkedIssuesOrPullRequests;
+		let enrichedAutolinks;
 		let pr;
 
-		if (remote?.provider != null) {
-			const [autolinkedIssuesOrPullRequestsResult, prResult] = await Promise.allSettled([
-				this.view.container.autolinks.getLinkedIssuesAndPullRequests(
-					this.commit.message ?? this.commit.summary,
-					remote,
-				),
+		if (remote?.hasRichIntegration()) {
+			const [enrichedAutolinksResult, prResult] = await Promise.allSettled([
+				pauseOnCancelOrTimeoutMapTuplePromise(this.commit.getEnrichedAutolinks(remote)),
 				this.getAssociatedPullRequest(this.commit, remote),
 			]);
 
-			autolinkedIssuesOrPullRequests = getSettledValue(autolinkedIssuesOrPullRequestsResult);
+			enrichedAutolinks = getSettledValue(enrichedAutolinksResult)?.value;
 			pr = getSettledValue(prResult);
-
-			// Remove possible duplicate pull request
-			if (pr != null) {
-				autolinkedIssuesOrPullRequests?.delete(pr.id);
-			}
 		}
 
 		const tooltip = await CommitFormatter.fromTemplateAsync(this.view.config.formats.commits.tooltip, this.commit, {
-			autolinkedIssuesOrPullRequests: autolinkedIssuesOrPullRequests,
+			enrichedAutolinks: enrichedAutolinks,
 			dateFormat: configuration.get('defaultDateFormat'),
 			getBranchAndTagTips: this.getBranchAndTagTips,
 			messageAutolinks: true,
 			messageIndent: 4,
-			pullRequestOrRemote: pr,
+			pullRequest: pr,
 			outputFormat: 'markdown',
 			remotes: remotes,
 			unpublished: this.unpublished,

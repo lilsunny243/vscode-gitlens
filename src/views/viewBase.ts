@@ -2,6 +2,7 @@ import type {
 	CancellationToken,
 	ConfigurationChangeEvent,
 	Event,
+	TreeCheckboxChangeEvent,
 	TreeDataProvider,
 	TreeItem,
 	TreeView,
@@ -69,7 +70,7 @@ export type View =
 
 export type ViewsWithBranches = BranchesView | CommitsView | RemotesView | RepositoriesView | WorkspacesView;
 export type ViewsWithBranchesNode = BranchesView | RepositoriesView | WorkspacesView;
-export type ViewsWithCommits = Exclude<View, FileHistoryView | LineHistoryView | StashesView>;
+export type ViewsWithCommits = Exclude<View, LineHistoryView | StashesView>;
 export type ViewsWithContributors = ContributorsView | RepositoriesView | WorkspacesView;
 export type ViewsWithContributorsNode = ContributorsView | RepositoriesView | WorkspacesView;
 export type ViewsWithRemotes = RemotesView | RepositoriesView | WorkspacesView;
@@ -132,6 +133,11 @@ export abstract class ViewBase<
 	private _onDidChangeNodeCollapsibleState = new EventEmitter<TreeViewNodeCollapsibleStateChangeEvent<ViewNode>>();
 	get onDidChangeNodeCollapsibleState(): Event<TreeViewNodeCollapsibleStateChangeEvent<ViewNode>> {
 		return this._onDidChangeNodeCollapsibleState.event;
+	}
+
+	private _onDidChangeNodesCheckedState = new EventEmitter<TreeCheckboxChangeEvent<ViewNode>>();
+	get onDidChangeNodesCheckedState(): Event<TreeCheckboxChangeEvent<ViewNode>> {
+		return this._onDidChangeNodesCheckedState.event;
 	}
 
 	protected disposables: Disposable[] = [];
@@ -312,6 +318,7 @@ export abstract class ViewBase<
 			this.tree,
 			this.tree.onDidChangeSelection(debounce(this.onSelectionChanged, 250), this),
 			this.tree.onDidChangeVisibility(debounce(this.onVisibilityChanged, 250), this),
+			this.tree.onDidChangeCheckboxState(this.onCheckboxStateChanged, this),
 			this.tree.onDidCollapseElement(this.onElementCollapsed, this),
 			this.tree.onDidExpandElement(this.onElementExpanded, this),
 		);
@@ -362,6 +369,21 @@ export abstract class ViewBase<
 
 	protected onElementExpanded(e: TreeViewExpansionEvent<ViewNode>) {
 		this._onDidChangeNodeCollapsibleState.fire({ ...e, state: TreeItemCollapsibleState.Expanded });
+	}
+
+	protected onCheckboxStateChanged(e: TreeCheckboxChangeEvent<ViewNode>) {
+		try {
+			for (const [node, state] of e.items) {
+				if (node.id == null) {
+					debugger;
+					throw new Error('Id is required for checkboxes');
+				}
+
+				node.storeState('checked', state, true);
+			}
+		} finally {
+			this._onDidChangeNodesCheckedState.fire(e);
+		}
 	}
 
 	protected onSelectionChanged(e: TreeViewSelectionChangeEvent<ViewNode>) {
@@ -653,39 +675,82 @@ export abstract class ViewBase<
 }
 
 export class ViewNodeState implements Disposable {
-	private _state: Map<string, Map<string, unknown>> | undefined;
+	private _store: Map<string, Map<string, unknown>> | undefined;
+	private _stickyStore: Map<string, Map<string, unknown>> | undefined;
 
 	dispose() {
 		this.reset();
+
+		this._stickyStore?.clear();
+		this._stickyStore = undefined;
 	}
 
 	reset() {
-		this._state?.clear();
-		this._state = undefined;
+		this._store?.clear();
+		this._store = undefined;
+	}
+
+	delete(prefix: string, key: string): void {
+		for (const store of [this._store, this._stickyStore]) {
+			if (store == null) continue;
+
+			for (const [id, map] of store) {
+				if (id.startsWith(prefix)) {
+					map.delete(key);
+				}
+			}
+		}
 	}
 
 	deleteState(id: string, key?: string): void {
 		if (key == null) {
-			this._state?.delete(id);
+			this._store?.delete(id);
+			this._stickyStore?.delete(id);
 		} else {
-			this._state?.get(id)?.delete(key);
+			this._store?.get(id)?.delete(key);
+			this._stickyStore?.get(id)?.delete(key);
 		}
+	}
+
+	get<T>(prefix: string, key: string): Map<string, T> {
+		const maps = new Map<string, T>();
+
+		for (const store of [this._store, this._stickyStore]) {
+			if (store == null) continue;
+
+			for (const [id, map] of store) {
+				if (id.startsWith(prefix) && map.has(key)) {
+					maps.set(id, map.get(key) as T);
+				}
+			}
+		}
+
+		return maps;
 	}
 
 	getState<T>(id: string, key: string): T | undefined {
-		return this._state?.get(id)?.get(key) as T | undefined;
+		return (this._stickyStore?.get(id)?.get(key) ?? this._store?.get(id)?.get(key)) as T | undefined;
 	}
 
-	storeState<T>(id: string, key: string, value: T): void {
-		if (this._state == null) {
-			this._state = new Map();
+	storeState<T>(id: string, key: string, value: T, sticky?: boolean): void {
+		let store;
+		if (sticky) {
+			if (this._stickyStore == null) {
+				this._stickyStore = new Map();
+			}
+			store = this._stickyStore;
+		} else {
+			if (this._store == null) {
+				this._store = new Map();
+			}
+			store = this._store;
 		}
 
-		const state = this._state.get(id);
+		const state = store.get(id);
 		if (state != null) {
 			state.set(key, value);
 		} else {
-			this._state.set(id, new Map([[key, value]]));
+			store.set(id, new Map([[key, value]]));
 		}
 	}
 }

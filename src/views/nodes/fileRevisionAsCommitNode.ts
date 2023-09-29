@@ -11,6 +11,7 @@ import type { GitCommit } from '../../git/models/commit';
 import type { GitFile } from '../../git/models/file';
 import { getGitFileStatusIcon } from '../../git/models/file';
 import type { GitRevisionReference } from '../../git/models/reference';
+import { pauseOnCancelOrTimeoutMapTuplePromise } from '../../system/cancellation';
 import { configuration } from '../../system/configuration';
 import { joinPaths } from '../../system/path';
 import { getSettledValue } from '../../system/promise';
@@ -203,32 +204,25 @@ export class FileRevisionAsCommitNode extends ViewRefFileNode<ViewsWithCommits |
 	}
 
 	private async getTooltip() {
-		const remotes = await this.view.container.git.getRemotesWithProviders(this.commit.repoPath);
-		const remote = await this.view.container.git.getBestRemoteWithRichProvider(remotes);
+		const [remotesResult, _] = await Promise.allSettled([
+			this.view.container.git.getBestRemotesWithProviders(this.commit.repoPath),
+			this.commit.message == null ? this.commit.ensureFullDetails() : undefined,
+		]);
 
-		if (this.commit.message == null) {
-			await this.commit.ensureFullDetails();
-		}
+		const remotes = getSettledValue(remotesResult, []);
+		const [remote] = remotes;
 
-		let autolinkedIssuesOrPullRequests;
+		let enrichedAutolinks;
 		let pr;
 
-		if (remote?.provider != null) {
-			const [autolinkedIssuesOrPullRequestsResult, prResult] = await Promise.allSettled([
-				this.view.container.autolinks.getLinkedIssuesAndPullRequests(
-					this.commit.message ?? this.commit.summary,
-					remote,
-				),
-				this.commit.getAssociatedPullRequest({ remote: remote }),
+		if (remote?.hasRichIntegration()) {
+			const [enrichedAutolinksResult, prResult] = await Promise.allSettled([
+				pauseOnCancelOrTimeoutMapTuplePromise(this.commit.getEnrichedAutolinks(remote)),
+				this.commit.getAssociatedPullRequest(remote),
 			]);
 
-			autolinkedIssuesOrPullRequests = getSettledValue(autolinkedIssuesOrPullRequestsResult);
+			enrichedAutolinks = getSettledValue(enrichedAutolinksResult)?.value;
 			pr = getSettledValue(prResult);
-
-			// Remove possible duplicate pull request
-			if (pr != null) {
-				autolinkedIssuesOrPullRequests?.delete(pr.id);
-			}
 		}
 
 		const status = StatusFileFormatter.fromTemplate(
@@ -239,12 +233,12 @@ export class FileRevisionAsCommitNode extends ViewRefFileNode<ViewsWithCommits |
 			this.view.config.formats.commits.tooltipWithStatus.replace('{{slot-status}}', status),
 			this.commit,
 			{
-				autolinkedIssuesOrPullRequests: autolinkedIssuesOrPullRequests,
+				enrichedAutolinks: enrichedAutolinks,
 				dateFormat: configuration.get('defaultDateFormat'),
 				getBranchAndTagTips: this._options.getBranchAndTagTips,
 				messageAutolinks: true,
 				messageIndent: 4,
-				pullRequestOrRemote: pr,
+				pullRequest: pr,
 				outputFormat: 'markdown',
 				remotes: remotes,
 				unpublished: this._options.unpublished,

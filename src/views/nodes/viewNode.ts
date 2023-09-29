@@ -28,7 +28,7 @@ import { debug, log, logName } from '../../system/decorators/log';
 import { is as isA, szudzikPairing } from '../../system/function';
 import { getLoggableName } from '../../system/logger';
 import { pad } from '../../system/string';
-import type { TreeViewNodeCollapsibleStateChangeEvent, View } from '../viewBase';
+import type { View } from '../viewBase';
 import type { BranchTrackingStatus } from './branchTrackingStatusNode';
 
 export const enum ContextValues {
@@ -111,6 +111,7 @@ export interface AmbientContext {
 	readonly repository?: Repository;
 	readonly root?: boolean;
 	readonly searchId?: string;
+	readonly storedComparisonId?: string;
 	readonly tag?: GitTag;
 	readonly workspace?: CloudWorkspace | LocalWorkspace;
 	readonly wsRepositoryDescriptor?: CloudWorkspaceRepositoryDescriptor | LocalWorkspaceRepositoryDescriptor;
@@ -271,12 +272,16 @@ export abstract class ViewNode<TView extends View = View, State extends object =
 		return this.view.nodeState.getState(this.id, key as string);
 	}
 
-	storeState<T extends StateKey<State> = StateKey<State>>(key: T, value: StateValue<State, T>): void {
+	storeState<T extends StateKey<State> = StateKey<State>>(
+		key: T,
+		value: StateValue<State, T>,
+		sticky?: boolean,
+	): void {
 		if (this.id == null) {
 			debugger;
 			throw new Error('Id is required to store state');
 		}
-		this.view.nodeState.storeState(this.id, key as string, value);
+		this.view.nodeState.storeState(this.id, key as string, value, sticky);
 	}
 }
 
@@ -370,7 +375,7 @@ export abstract class SubscribeableViewNode<TView extends View = View> extends V
 
 		const disposables = [
 			this.view.onDidChangeVisibility(this.onVisibilityChanged, this),
-			this.view.onDidChangeNodeCollapsibleState(this.onNodeCollapsibleStateChanged, this),
+			// this.view.onDidChangeNodeCollapsibleState(this.onNodeCollapsibleStateChanged, this),
 		];
 
 		if (canAutoRefreshView(this.view)) {
@@ -463,22 +468,22 @@ export abstract class SubscribeableViewNode<TView extends View = View> extends V
 		this.onVisibilityChanged({ visible: this.view.visible });
 	}
 
-	protected onParentCollapsibleStateChanged?(state: TreeItemCollapsibleState): void;
-	protected onCollapsibleStateChanged?(state: TreeItemCollapsibleState): void;
+	// protected onParentCollapsibleStateChanged?(state: TreeItemCollapsibleState): void;
+	// protected onCollapsibleStateChanged?(state: TreeItemCollapsibleState): void;
 
-	protected collapsibleState: TreeItemCollapsibleState | undefined;
-	protected onNodeCollapsibleStateChanged(e: TreeViewNodeCollapsibleStateChangeEvent<ViewNode>) {
-		if (e.element === this) {
-			this.collapsibleState = e.state;
-			if (this.onCollapsibleStateChanged !== undefined) {
-				this.onCollapsibleStateChanged(e.state);
-			}
-		} else if (e.element === this.parent) {
-			if (this.onParentCollapsibleStateChanged !== undefined) {
-				this.onParentCollapsibleStateChanged(e.state);
-			}
-		}
-	}
+	// protected collapsibleState: TreeItemCollapsibleState | undefined;
+	// protected onNodeCollapsibleStateChanged(e: TreeViewNodeCollapsibleStateChangeEvent<ViewNode>) {
+	// 	if (e.element === this) {
+	// 		this.collapsibleState = e.state;
+	// 		if (this.onCollapsibleStateChanged !== undefined) {
+	// 			this.onCollapsibleStateChanged(e.state);
+	// 		}
+	// 	} else if (e.element === this.parent) {
+	// 		if (this.onParentCollapsibleStateChanged !== undefined) {
+	// 			this.onParentCollapsibleStateChanged(e.state);
+	// 		}
+	// 	}
+	// }
 
 	@debug()
 	protected onVisibilityChanged(e: TreeViewVisibilityChangeEvent) {
@@ -587,7 +592,7 @@ export abstract class RepositoryFolderNode<
 				);
 				providerName = providers?.length ? providers[0].name : undefined;
 			} else {
-				const remote = await branch.getRemoteWithProvider();
+				const remote = await branch.getRemote();
 				providerName = remote?.provider?.name;
 			}
 

@@ -1,5 +1,4 @@
 import { ThemeIcon, TreeItem, TreeItemCollapsibleState } from 'vscode';
-import { ViewFilesLayout } from '../../config';
 import { GitUri } from '../../git/gitUri';
 import type { GitDiffShortStat } from '../../git/models/diff';
 import type { GitFile } from '../../git/models/file';
@@ -16,6 +15,10 @@ import { FolderNode } from './folderNode';
 import { ResultsFileNode } from './resultsFileNode';
 import { ContextValues, getViewNodeId, ViewNode } from './viewNode';
 
+type State = {
+	filter: FilesQueryFilter | undefined;
+};
+
 export enum FilesQueryFilter {
 	Left = 0,
 	Right = 1,
@@ -29,7 +32,7 @@ export interface FilesQueryResults {
 	filtered?: Map<FilesQueryFilter, GitFile[]>;
 }
 
-export class ResultsFilesNode extends ViewNode<ViewsWithCommits> {
+export class ResultsFilesNode extends ViewNode<ViewsWithCommits, State> {
 	constructor(
 		view: ViewsWithCommits,
 		protected override parent: ViewNode,
@@ -56,12 +59,12 @@ export class ResultsFilesNode extends ViewNode<ViewsWithCommits> {
 	}
 
 	get filter(): FilesQueryFilter | undefined {
-		return this.view.nodeState.getState<FilesQueryFilter>(this.id, 'filter');
+		return this.getState('filter');
 	}
 	set filter(value: FilesQueryFilter | undefined) {
 		if (this.filter === value) return;
 
-		this.view.nodeState.storeState(this.id, 'filter', value);
+		this.storeState('filter', value, true);
 		this._filterResults = undefined;
 
 		void this.triggerChange(false);
@@ -94,7 +97,7 @@ export class ResultsFilesNode extends ViewNode<ViewsWithCommits> {
 			),
 		];
 
-		if (this.view.config.files.layout !== ViewFilesLayout.List) {
+		if (this.view.config.files.layout !== 'list') {
 			const hierarchy = makeHierarchical(
 				children,
 				n => n.uri.relativePath.split('/'),
@@ -188,7 +191,7 @@ export class ResultsFilesNode extends ViewNode<ViewsWithCommits> {
 	override refresh(reset: boolean = false) {
 		if (!reset) return;
 
-		this.view.nodeState.deleteState(this.id, 'filter');
+		this.deleteState('filter');
 
 		this._filterResults = undefined;
 		this._filesQueryResults = this._filesQuery();

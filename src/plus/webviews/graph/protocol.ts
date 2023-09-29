@@ -23,6 +23,7 @@ import type {
 	WorkDirStats,
 } from '@gitkraken/gitkraken-components';
 import type { Config, DateStyle } from '../../../config';
+import type { WebviewIds, WebviewViewIds } from '../../../constants';
 import type { RepositoryVisibility } from '../../../git/gitProvider';
 import type { GitTrackingState } from '../../../git/models/branch';
 import type { GitGraphRowType } from '../../../git/models/graph';
@@ -56,10 +57,7 @@ export type GraphMissingRefsMetadataType = RefMetadataType;
 export type GraphMissingRefsMetadata = Record</*id*/ string, /*missingType*/ GraphMissingRefsMetadataType[]>;
 export type GraphPullRequestMetadata = PullRequestMetadata;
 
-export enum GraphRefMetadataTypes {
-	Upstream = 'upstream',
-	PullRequest = 'pullRequest',
-}
+export type GraphRefMetadataTypes = 'upstream' | 'pullRequest' | 'issue';
 
 export type GraphScrollMarkerTypes =
 	| 'selection'
@@ -81,9 +79,10 @@ export type GraphMinimapMarkerTypes =
 	| 'tags'
 	| 'upstream';
 
-export const supportedRefMetadataTypes: GraphRefMetadataType[] = Object.values(GraphRefMetadataTypes);
+export const supportedRefMetadataTypes: GraphRefMetadataType[] = ['upstream', 'pullRequest', 'issue'];
 
 export interface State {
+	webviewId: WebviewIds | WebviewViewIds;
 	timestamp: number;
 
 	windowFocused?: boolean;

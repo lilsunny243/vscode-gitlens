@@ -1,7 +1,6 @@
 import type { Command } from 'vscode';
 import { MarkdownString, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState, Uri } from 'vscode';
 import type { DiffWithPreviousCommandArgs } from '../../commands';
-import { ViewFilesLayout } from '../../config';
 import type { CoreColors } from '../../constants';
 import { Commands } from '../../constants';
 import { CommitFormatter } from '../../git/formatters/commitFormatter';
@@ -13,6 +12,7 @@ import type { GitRevisionReference } from '../../git/models/reference';
 import { getReferenceLabel } from '../../git/models/reference';
 import type { GitStatus } from '../../git/models/status';
 import { makeHierarchical } from '../../system/array';
+import { pauseOnCancelOrTimeoutMapTuplePromise } from '../../system/cancellation';
 import { executeCoreCommand } from '../../system/command';
 import { configuration } from '../../system/configuration';
 import { joinPaths, normalizePath } from '../../system/path';
@@ -49,7 +49,7 @@ export class RebaseStatusNode extends ViewNode<ViewsWithCommits> {
 		let children: FileNode[] =
 			this.status?.conflicts.map(f => new MergeConflictFileNode(this.view, this, f, this.rebaseStatus)) ?? [];
 
-		if (this.view.config.files.layout !== ViewFilesLayout.List) {
+		if (this.view.config.files.layout !== 'list') {
 			const hierarchy = makeHierarchical(
 				children,
 				n => n.uri.relativePath.split('/'),
@@ -140,7 +140,7 @@ export class RebaseCommitNode extends ViewRefNode<ViewsWithCommits, GitRevisionR
 		const commits = await commit.getCommitsForFiles();
 		let children: FileNode[] = commits.map(c => new CommitFileNode(this.view, this, c.file!, c));
 
-		if (this.view.config.files.layout !== ViewFilesLayout.List) {
+		if (this.view.config.files.layout !== 'list') {
 			const hierarchy = makeHierarchical(
 				children,
 				n => n.uri.relativePath.split('/'),
@@ -195,43 +195,36 @@ export class RebaseCommitNode extends ViewRefNode<ViewsWithCommits, GitRevisionR
 	}
 
 	private async getTooltip() {
-		const remotes = await this.view.container.git.getRemotesWithProviders(this.commit.repoPath);
-		const remote = await this.view.container.git.getBestRemoteWithRichProvider(remotes);
+		const [remotesResult, _] = await Promise.allSettled([
+			this.view.container.git.getBestRemotesWithProviders(this.commit.repoPath),
+			this.commit.message == null ? this.commit.ensureFullDetails() : undefined,
+		]);
 
-		if (this.commit.message == null) {
-			await this.commit.ensureFullDetails();
-		}
+		const remotes = getSettledValue(remotesResult, []);
+		const [remote] = remotes;
 
-		let autolinkedIssuesOrPullRequests;
+		let enrichedAutolinks;
 		let pr;
 
-		if (remote?.provider != null) {
-			const [autolinkedIssuesOrPullRequestsResult, prResult] = await Promise.allSettled([
-				this.view.container.autolinks.getLinkedIssuesAndPullRequests(
-					this.commit.message ?? this.commit.summary,
-					remote,
-				),
-				this.commit.getAssociatedPullRequest({ remote: remote }),
+		if (remote?.hasRichIntegration()) {
+			const [enrichedAutolinksResult, prResult] = await Promise.allSettled([
+				pauseOnCancelOrTimeoutMapTuplePromise(this.commit.getEnrichedAutolinks(remote)),
+				this.commit.getAssociatedPullRequest(remote),
 			]);
 
-			autolinkedIssuesOrPullRequests = getSettledValue(autolinkedIssuesOrPullRequestsResult);
+			enrichedAutolinks = getSettledValue(enrichedAutolinksResult)?.value;
 			pr = getSettledValue(prResult);
-
-			// Remove possible duplicate pull request
-			if (pr != null) {
-				autolinkedIssuesOrPullRequests?.delete(pr.id);
-			}
 		}
 
 		const tooltip = await CommitFormatter.fromTemplateAsync(
 			`Rebase paused at ${this.view.config.formats.commits.tooltip}`,
 			this.commit,
 			{
-				autolinkedIssuesOrPullRequests: autolinkedIssuesOrPullRequests,
+				enrichedAutolinks: enrichedAutolinks,
 				dateFormat: configuration.get('defaultDateFormat'),
 				messageAutolinks: true,
 				messageIndent: 4,
-				pullRequestOrRemote: pr,
+				pullRequest: pr,
 				outputFormat: 'markdown',
 				remotes: remotes,
 			},
